@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { dispatchEvent, type SseHandlers } from "../src/opencode.ts";
+import { dispatchEvent, extractTurnResult, type SseHandlers } from "../src/opencode.ts";
 
 function recording(): SseHandlers & { calls: Record<string, any[]> } {
   const calls: Record<string, any[]> = {
@@ -9,6 +9,7 @@ function recording(): SseHandlers & { calls: Record<string, any[]> } {
     onSessionError: [],
     onCostUpdate: [],
     onCompacted: [],
+    onIdle: [],
   };
   return {
     calls,
@@ -17,6 +18,7 @@ function recording(): SseHandlers & { calls: Record<string, any[]> } {
     onSessionError: (e) => calls.onSessionError.push(e),
     onCostUpdate: (u) => calls.onCostUpdate.push(u),
     onCompacted: (s) => calls.onCompacted.push(s),
+    onIdle: (s) => calls.onIdle.push(s),
   };
 }
 
@@ -151,4 +153,59 @@ test("nested payload without a type is not double-unwrapped into a bare event", 
   const h = recording();
   dispatchEvent({ directory: "/x", payload: { properties: { sessionID: "ses1" } } }, h);
   assert.equal(h.calls.onCompacted.length, 0);
+});
+
+test("session.idle and session.status:idle both signal turn completion", () => {
+  const h = recording();
+  dispatchEvent({ type: "session.idle", properties: { sessionID: "ses1" } }, h);
+  dispatchEvent({ type: "session.status", properties: { sessionID: "ses1", status: { type: "idle" } } }, h);
+  assert.deepEqual(h.calls.onIdle, ["ses1", "ses1"]);
+});
+
+test("busy/retry session status does not signal completion", () => {
+  const h = recording();
+  dispatchEvent({ type: "session.status", properties: { sessionID: "ses1", status: { type: "busy" } } }, h);
+  dispatchEvent({ type: "session.status", properties: { sessionID: "ses1", status: { type: "retry", attempt: 1, message: "x", next: 1 } } }, h);
+  assert.equal(h.calls.onIdle.length, 0);
+});
+
+// ---------------------------------------------------------------------------
+// extractTurnResult — the reply-pull that replaces the blocking POST response.
+// ---------------------------------------------------------------------------
+
+const msg = (info: any, parts: Array<any> = []) => ({ info, parts });
+
+test("extractTurnResult takes the LAST assistant message of the turn (per-step messages)", () => {
+  const messages = [
+    msg({ role: "user", id: "u1" }, [{ type: "text", text: "fix the bug" }]),
+    msg({ role: "assistant", parentID: "u1" }, [{ type: "text", text: "narration around tools" }, { type: "tool" }]),
+    msg({ role: "assistant", parentID: "u1" }, [{ type: "text", text: "final answer" }]),
+  ];
+  assert.deepEqual(extractTurnResult(messages), { text: "final answer" });
+});
+
+test("extractTurnResult falls back to the last assistant message when the user message is missing", () => {
+  const messages = [
+    msg({ role: "assistant", parentID: "u_gone" }, [{ type: "text", text: "orphaned answer" }]),
+  ];
+  assert.deepEqual(extractTurnResult(messages), { text: "orphaned answer" });
+});
+
+test("extractTurnResult surfaces a rejected turn's info.error instead of a blank reply", () => {
+  const messages = [
+    msg({ role: "user", id: "u1" }, [{ type: "text", text: "huge task" }]),
+    msg({ role: "assistant", parentID: "u1", error: { name: "ContextTooLarge", data: { message: "trim it" } } }, []),
+  ];
+  assert.deepEqual(extractTurnResult(messages), { text: "", error: "trim it" });
+});
+
+test("extractTurnResult without any data.message falls back to the error name", () => {
+  const messages = [
+    msg({ role: "assistant", parentID: "u1", error: { name: "MessageAbortedError" } }, []),
+  ];
+  assert.deepEqual(extractTurnResult(messages), { text: "", error: "MessageAbortedError" });
+});
+
+test("extractTurnResult on an empty message list yields empty text, no error", () => {
+  assert.deepEqual(extractTurnResult([]), { text: "" });
 });

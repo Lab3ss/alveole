@@ -5,6 +5,7 @@
  * server even over the cluster network.
  */
 import { Agent, fetch as undiciFetch } from "undici";
+import { describeError } from "./util.ts";
 
 // Node's *global* fetch defaults to a 5-minute socket timeout (undici's
 // Agent default headersTimeout/bodyTimeout), which a real multi-step coding
@@ -19,11 +20,12 @@ import { Agent, fetch as undiciFetch } from "undici";
 // connectTimeout is separate from headersTimeout/bodyTimeout — it only bounds the TCP
 // handshake, not the wait for opencode's response — so a stuck connection (e.g. a stale
 // conntrack entry routing the SYN into a black hole) fails fast and lets the caller retry
-// on a fresh socket, instead of silently tying up the 1-hour turn budget for nothing.
-// The 1h budget isn't arbitrary headroom for slow models: a turn paused on an approval
-// gate waits for a human (no timeout, by design), so the blocking POST must outlive
-// that wait. See the event-driven-turn follow-up for the real fix.
-const longRunningDispatcher = new Agent({ connectTimeout: 10_000, headersTimeout: 3_600_000, bodyTimeout: 3_600_000 });
+// on a fresh socket, instead of silently tying up the turn budget for nothing.
+// headersTimeout/bodyTimeout are set far beyond anything the orchestrator's own turn
+// guardrails (inactivity watchdog, duration cap, session-cost cap) would ever let run:
+// the turn's real limits live there — this is only here so the socket itself can't be
+// the thing that decides when a legitimate long turn dies.
+const longRunningDispatcher = new Agent({ connectTimeout: 10_000, headersTimeout: 86_400_000, bodyTimeout: 86_400_000 });
 
 function authHeader(password: string): string {
   return "Basic " + Buffer.from(`opencode:${password}`).toString("base64");
@@ -62,9 +64,10 @@ export async function createSession(baseUrl: string, password: string, signal?: 
 }
 
 /**
- * Cheap, side-effect-free connectivity check. `sendMessage` can legitimately take up to the
- * full 30-minute turn budget, so it can't carry a short AbortSignal itself — but a wedged TCP
- * handshake (stale conntrack entry) looks identical to a slow real turn from the caller's
+ * Cheap, side-effect-free connectivity check. `sendPrompt` can legitimately
+ * take as long as the whole turn (which may pause on a human approval gate),
+ * so it can't carry a short AbortSignal itself — but a wedged TCP handshake
+ * (stale conntrack entry) looks identical to a slow real turn from the caller's
  * side, so the only way to fail fast on the former without cutting off the latter is to probe
  * first, on a bounded timeout, before committing to the long call.
  */
@@ -72,40 +75,104 @@ export async function probeConnection(baseUrl: string, password: string): Promis
   await req(baseUrl, password, "/session/status", { signal: AbortSignal.timeout(10_000) });
 }
 
-/** Sends a prompt, waits for the full reply, returns its plain-text concatenation. */
-export async function sendMessage(
+/** A raw message as returned by GET /session/:id/message. Kept loose: only the
+ * fields below are relied on (see extractReplyText), anything else passes through. */
+export type RawMessage = { info?: any; parts?: Array<any> };
+
+/**
+ * Fires a prompt at the room's opencode server and returns immediately — the
+ * turn may run for hours (multi-step work, or paused on an approval gate
+ * waiting for a human), so nothing must impose a deadline on it.
+ *
+ * `onDone` is called exactly once, later:
+ * - `onDone(undefined)` when the POST resolves (opencode answers only at turn
+ *   end) — treated by the orchestrator as a turn-completion signal, redundant
+ *   with the SSE idle event in case the stream dropped;
+ * - `onDone(details)` on early failure (pod gone, connection refused) or a
+ *   non-2xx at turn end.
+ *
+ * Completion itself is detected by the orchestrator via the SSE stream; the
+ * reply text is fetched afterwards with getMessages — the POST response is
+ * deliberately not parsed into a result.
+ */
+export function sendPrompt(
   baseUrl: string,
   password: string,
   sessionId: string,
   text: string,
-  model?: string,
-): Promise<string> {
+  model: string | undefined,
+  onDone: (err: string | undefined) => void,
+): void {
   const body: Record<string, unknown> = { parts: [{ type: "text", text }] };
   // The API wants { providerID, modelID }, not a bare string. Every room only
   // has an OPENROUTER_API_KEY, so the provider is always "openrouter"; the
   // user-supplied model (e.g. "google/gemini-3.8-flash:batch") is the modelID
   // OpenRouter itself expects.
   if (model) body.model = { providerID: "openrouter", modelID: model };
-  const res = await req<{
-    info: { error?: { name: string; data?: { message?: string } } };
-    parts: Array<{ type: string; text?: string }>;
-  }>(baseUrl, password, `/session/${sessionId}/message`, { method: "POST", body: JSON.stringify(body) });
-  // A rejected turn (e.g. context too large for the model) comes back as a normal 200 with
-  // an empty `parts` and the real failure on `info.error` — silently treating that as "no
-  // output" hides an actionable error behind a blank reply.
-  if (res.info.error) {
-    throw new Error(`opencode turn failed: ${res.info.error.data?.message ?? res.info.error.name}`);
-  }
-  return res.parts
+  const attempt = () =>
+    undiciFetch(baseUrl + `/session/${sessionId}/message`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: authHeader(password) },
+      body: JSON.stringify(body),
+      dispatcher: longRunningDispatcher,
+    } as Parameters<typeof undiciFetch>[1]);
+  const settle = async (res: UndiciResponse) => {
+    if (!res.ok) onDone(`opencode /session/${sessionId}/message -> ${res.status} ${await res.text().catch(() => "")}`);
+    else {
+      await res.json().catch(() => undefined); // drain the body, free the socket
+      onDone(undefined);
+    }
+  };
+  attempt().then(settle).catch((err: any) => {
+    // Same rationale as req(): a failed TCP handshake never reached the server,
+    // so retrying once on a fresh connection is side-effect-free.
+    if (err?.code !== "UND_ERR_CONNECT_TIMEOUT") return onDone(describeError(err));
+    console.warn(`[opencode] connect timeout sending prompt, retrying once on a fresh connection`);
+    attempt().then(settle).catch((err2: any) => onDone(describeError(err2)));
+  });
+}
+
+/** Lists a session's messages, oldest first — used to fetch the turn's reply
+ * after completion. This endpoint answers immediately; no long-running timeout
+ * concerns. */
+export async function getMessages(baseUrl: string, password: string, sessionId: string): Promise<RawMessage[]> {
+  const res = await req<RawMessage[]>(baseUrl, password, `/session/${sessionId}/message`);
+  return Array.isArray(res) ? res : [];
+}
+
+/**
+ * Extracts the user-facing result of a just-finished turn from the message list.
+ * opencode emits one assistant message per step (tool-calls included), all
+ * sharing the same parentID — the reply is the LAST assistant message of the
+ * turn (its finish reason is "stop"); intermediate ones are narration around
+ * tool calls. Falls back to the last assistant message overall when the turn's
+ * user message can't be located (e.g. after compaction edge cases).
+ *
+ * A REJECTED turn (e.g. context too large for the model) surfaces as a normal
+ * end-of-turn with the real failure on the assistant message's info.error and
+ * no text — returning it as `error` (instead of an empty `text`) keeps an
+ * actionable message from hiding behind a blank reply.
+ */
+export function extractTurnResult(messages: RawMessage[]): { text: string; error?: string } {
+  const lastUser = [...messages].reverse().find((m) => m.info?.role === "user");
+  const assistants = messages.filter((m) => m.info?.role === "assistant");
+  const turnReply =
+    (lastUser ? [...assistants].reverse().find((m) => m.info?.parentID === lastUser.info?.id) : undefined) ??
+    assistants.at(-1);
+  const error = turnReply?.info?.error
+    ? (turnReply.info.error.data?.message ?? turnReply.info.error.name ?? "unknown error")
+    : undefined;
+  const text = (turnReply?.parts ?? [])
     .filter((p) => p.type === "text" && p.text)
     .map((p) => p.text)
     .join("\n")
     .trim();
+  return error ? { text, error } : { text };
 }
 
 /**
- * Stops any ongoing AI processing/command execution for a session. Must be called whenever
- * our own client-side sendMessage call gives up (timeout or otherwise) — opencode has no
+ * Stops any ongoing AI processing/command execution for a session. Must be called when the
+ * orchestrator gives up on a turn (watchdog, duration/cost cap) — opencode has no
  * visibility into "the broker stopped waiting", so without this the turn keeps running
  * server-side forever, and since a session processes one turn at a time, every subsequent
  * message on that session queues silently behind it (zero CPU, zero network — just stuck
@@ -152,6 +219,10 @@ export type SseHandlers = {
   onSessionError: (err: SessionError) => void;
   onCostUpdate: (update: SessionCostUpdate) => void;
   onCompacted: (sessionId: string) => void;
+  /** The session went idle: turn finished (session.idle, or session.status
+   * transitioning to idle). Fires for ANY session of the pod (subagents have
+   * their own sessionIDs) — callers filter. */
+  onIdle: (sessionId: string) => void;
 };
 
 /**
@@ -207,6 +278,9 @@ export function dispatchEvent(evt: any, handlers: SseHandlers): boolean {
     return true;
   } else if (inner.type === "session.compacted") {
     handlers.onCompacted(props.sessionID);
+    return true;
+  } else if (inner.type === "session.idle" || (inner.type === "session.status" && props.status?.type === "idle")) {
+    handlers.onIdle(props.sessionID);
     return true;
   }
   return false;
@@ -271,10 +345,11 @@ export async function watchPermissions(
   onSessionError: (err: SessionError) => void,
   onCostUpdate: (update: SessionCostUpdate) => void,
   onCompacted: (sessionId: string) => void,
+  onIdle: (sessionId: string) => void,
   onError: (err: unknown) => void,
 ): Promise<() => void> {
   const controller = new AbortController();
-  const handlers: SseHandlers = { onPermission, onProgress, onSessionError, onCostUpdate, onCompacted };
+  const handlers: SseHandlers = { onPermission, onProgress, onSessionError, onCostUpdate, onCompacted, onIdle };
 
   (async () => {
     let attempt = 0;

@@ -20,6 +20,8 @@ const calls = {
   sent: [] as string[],
   aborted: 0,
   redacted: 0,
+  /** Latest sendPrompt onDone callback — tests drive turn completion with it. */
+  lastPromptDone: undefined as ((err: string | undefined) => void) | undefined,
 };
 let watchHandlers: WatchHandlers | undefined;
 
@@ -55,7 +57,9 @@ const fakeRegistry: RegistryService = {
 // Failure toggles — flip these to drive the typed error paths end-to-end.
 const failures = {
   provision: false as Failure<"provision-failed"> | false,
-  sendMessage: null as Failure<"message-send-failed"> | null,
+  prompt: null as string | null, // sendPrompt early failure (undelivered prompt)
+  turnError: null as string | null, // turn rejected (assistant info.error)
+  messages: false as Failure<"messages-fetch-failed"> | false,
   usage: false as Failure<"usage-fetch-failed"> | false,
 };
 
@@ -78,13 +82,21 @@ const fakeWorkspace: WorkspaceService = {
   serverPassword: () => Effect.succeed("server-password"),
   createSession: () => Effect.succeed("ses1"),
   probe: () => Effect.void,
-  sendMessage: (_b, _p, _s, text) =>
-    failures.sendMessage
-      ? Effect.fail(failures.sendMessage)
-      : Effect.sync(() => {
-          calls.sent.push(text);
-          return `did the thing: ${text}`;
-        }),
+  sendPrompt: (_b, _p, _s, text, _model, onDone) =>
+    Effect.sync(() => {
+      calls.sent.push(text);
+      calls.lastPromptDone = onDone;
+      // Undelivered-prompt simulation fires asynchronously, like a real
+      // fetch would; a healthy prompt never completes on its own — tests
+      // drive completion via watchHandlers.onIdle or lastPromptDone.
+      if (failures.prompt) setTimeout(() => onDone(failures.prompt!), 0);
+    }),
+  turnResult: () =>
+    failures.turnError
+      ? Effect.succeed({ text: "", error: failures.turnError })
+      : failures.messages
+        ? Effect.fail(failures.messages)
+        : Effect.succeed({ text: `did the thing: ${calls.sent.at(-1) ?? ""}` }),
   abort: () =>
     Effect.sync(() => {
       calls.aborted++;
@@ -101,18 +113,41 @@ const fakeWorkspace: WorkspaceService = {
     }),
 };
 
+const layers = Layer.mergeAll(
+  Layer.effect(ChatAdapter, Effect.succeed(fakeAdapter)),
+  Layer.effect(Registry, Effect.succeed(fakeRegistry)),
+  Layer.effect(Workspace, Effect.succeed(fakeWorkspace)),
+);
+
 const runtime = ManagedRuntime.make(
   Layer.provide(
-    OrchestratorLive({ idleTeardownMs: 3600_000, sweepIntervalMs: 60_000 }),
-    Layer.mergeAll(
-      Layer.effect(ChatAdapter, Effect.succeed(fakeAdapter)),
-      Layer.effect(Registry, Effect.succeed(fakeRegistry)),
-      Layer.effect(Workspace, Effect.succeed(fakeWorkspace)),
-    ),
+    OrchestratorLive({ idleTeardownMs: 3600_000, sweepIntervalMs: 60_000, turnWatchdogMs: 0, turnMaxMs: 0, sessionCostCapUsd: 0 }),
+    layers,
   ),
 );
 
-test.after(() => runtime.dispose());
+// Guardrail runtimes: same fakes, but each caps ONE guardrail so its test is
+// deterministic — with several caps armed at once, event-loop jitter under
+// the test runner can reorder which timer fires first (real-world ratios are
+// 15 min vs 4 h, far beyond any jitter; the race only exists at ms scale).
+const createdRuntimes: Array<ManagedRuntime.ManagedRuntime<any, any>> = [];
+const guardrailOrchestrator = async (cap: Partial<import("../src/core/orchestrator.ts").OrchestratorConfig>) => {
+  const rt = ManagedRuntime.make(
+    Layer.provide(
+      OrchestratorLive({ idleTeardownMs: 3600_000, sweepIntervalMs: 60_000, turnWatchdogMs: 0, turnMaxMs: 0, sessionCostCapUsd: 0, ...cap }),
+      layers,
+    ),
+  );
+  createdRuntimes.push(rt);
+  const orch = await rt.runPromise(
+    Effect.gen(function* () {
+      return yield* Orchestrator;
+    }),
+  );
+  return (msg: InboundMessage) => Effect.runPromise(orch.handleInbound(msg));
+};
+
+test.after(() => Promise.all([runtime.dispose(), ...createdRuntimes.map((rt) => rt.dispose())]));
 
 const orchestrator = await runtime.runPromise(
   Effect.gen(function* () {
@@ -132,6 +167,8 @@ const until = async (check: () => boolean) => {
   assert.fail("condition not met within timeout");
 };
 
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
 const reset = () => {
   recorded.length = 0;
   rooms.clear();
@@ -141,18 +178,21 @@ const reset = () => {
   calls.sent.length = 0;
   calls.aborted = 0;
   calls.redacted = 0;
+  calls.lastPromptDone = undefined;
   failures.provision = false;
-  failures.sendMessage = null;
+  failures.prompt = null;
+  failures.turnError = null;
+  failures.messages = false;
   failures.usage = false;
   watchHandlers = undefined;
 };
 
 /** Full onboarding flow for one conversation — needed because reset() clears
  * the fake registry; every test must set up its own room. */
-const onboard = async (id = "!t1") => {
-  await run({ conversationId: id, text: "lab3ss/coding-agent" });
-  await run({ conversationId: id, text: "ghp_token1234567", messageId: "$m1" });
-  await run({ conversationId: id, text: "anthropic/claude-sonnet-4.5" });
+const onboard = async (id = "!t1", runner: (m: InboundMessage) => Promise<void> = run) => {
+  await runner({ conversationId: id, text: "lab3ss/coding-agent" });
+  await runner({ conversationId: id, text: "ghp_token1234567", messageId: "$m1" });
+  await runner({ conversationId: id, text: "anthropic/claude-sonnet-4.5" });
 };
 
 test("onboarding collects repo → token → model, then provisions the workspace", async () => {
@@ -178,14 +218,39 @@ test("onboarding collects repo → token → model, then provisions the workspac
   assert.ok(last.event.type === "info" && last.event.text.includes("Ready"));
 });
 
-test("steady-state task goes to opencode and the reply comes back as a result", async () => {
+test("steady-state task: prompt fired, room busy, SSE idle relays the result and releases the room", async () => {
   reset();
   await onboard("!t2");
   await run({ conversationId: "!t2", text: "fix the login bug" });
   assert.deepEqual(calls.sent, ["fix the login bug"]);
+  // The turn is in flight (asynchronous) — a second message is declined.
+  await run({ conversationId: "!t2", text: "and this too" });
+  assert.ok(recorded.some((r) => r.event.type === "info" && r.event.text.includes("Still working")));
+  assert.deepEqual(calls.sent, ["fix the login bug"]);
+  // Completion arrives via the SSE idle signal: reply pulled from the message
+  // list, room released.
+  watchHandlers!.onIdle("ses1");
+  await until(() => recorded.some((r) => r.event.type === "result"));
   const result = recorded.find((r) => r.event.type === "result");
   assert.ok(result);
   assert.equal(result.event.type === "result" && result.event.text, "did the thing: fix the login bug");
+  await run({ conversationId: "!t2", text: "one more" });
+  assert.deepEqual(calls.sent, ["fix the login bug", "one more"]);
+});
+
+test("POST resolution is a redundant completion signal when the SSE idle event is missed", async () => {
+  reset();
+  await onboard("!t2b");
+  await run({ conversationId: "!t2b", text: "fix the login bug" });
+  calls.lastPromptDone!(undefined); // POST resolved (turn end), no idle event
+  await until(() => recorded.some((r) => r.event.type === "result"));
+  const result = recorded.find((r) => r.event.type === "result");
+  assert.ok(result);
+  assert.equal(result.event.type === "result" && result.event.text, "did the thing: fix the login bug");
+  // Double completion is a no-op (idle also fires after the POST resolved).
+  watchHandlers!.onIdle("ses1");
+  await sleep(50);
+  assert.equal(recorded.filter((r) => r.event.type === "result").length, 1);
 });
 
 test("permission request is asked in the room; 'yes' relays allow to opencode", async () => {
@@ -272,15 +337,33 @@ test("onboarding provision failure surfaces the typed code in the room", async (
   assert.equal(err.event.type === "error" && err.event.text, "setup failed: provision-failed — boom");
 });
 
-test("task failure surfaces the typed code and aborts the server-side turn", async () => {
+test("undelivered prompt surfaces the error, doesn't abort (nothing running server-side) and releases the room", async () => {
   reset();
   await onboard("!t9");
-  failures.sendMessage = { code: "message-send-failed", details: "boom" };
+  failures.prompt = "ConnectError: connection refused";
   await run({ conversationId: "!t9", text: "fix the login bug" });
-  assert.equal(calls.aborted, 1); // turn aborted so it can't queue future messages
+  await until(() => recorded.some((r) => r.event.type === "error"));
   const err = recorded.find((r) => r.event.type === "error");
   assert.ok(err);
-  assert.equal(err.event.type === "error" && err.event.text, "task failed: message-send-failed — boom");
+  assert.equal(
+    err.event.type === "error" && err.event.text,
+    "task failed: prompt not delivered — ConnectError: connection refused",
+  );
+  assert.equal(calls.aborted, 0); // the prompt never reached opencode — nothing to abort
+  await run({ conversationId: "!t9", text: "try again" });
+  assert.deepEqual(calls.sent, ["fix the login bug", "try again"]); // room released
+});
+
+test("rejected turn (assistant info.error) surfaces the real failure, not a blank reply", async () => {
+  reset();
+  await onboard("!t9b");
+  failures.turnError = "context too large for model";
+  await run({ conversationId: "!t9b", text: "fix the login bug" });
+  watchHandlers!.onIdle("ses1");
+  await until(() => recorded.some((r) => r.event.type === "error"));
+  const err = recorded.find((r) => r.event.type === "error");
+  assert.ok(err);
+  assert.equal(err.event.type === "error" && err.event.text, "task failed: context too large for model");
 });
 
 test("/usage failure surfaces the typed code", async () => {
@@ -291,4 +374,84 @@ test("/usage failure surfaces the typed code", async () => {
   const err = recorded.find((r) => r.event.type === "error");
   assert.ok(err);
   assert.equal(err.event.type === "error" && err.event.text, "couldn't fetch usage: usage-fetch-failed — boom");
+});
+
+// ---------------------------------------------------------------------------
+// Turn guardrails (separate runtime with aggressive caps) — the async turn's
+// replacement for the old fixed POST deadline.
+// ---------------------------------------------------------------------------
+
+test("watchdog aborts a turn that goes silent and releases the room", async () => {
+  reset();
+  const runW = await guardrailOrchestrator({ turnWatchdogMs: 60 });
+  await onboard("!g1", runW);
+  await runW({ conversationId: "!g1", text: "long task" });
+  await until(() => recorded.some((r) => r.event.type === "error" && r.event.text.includes("no activity")));
+  assert.equal(calls.aborted, 1); // aborted server-side so it can't queue future turns
+  await runW({ conversationId: "!g1", text: "retry" });
+  assert.deepEqual(calls.sent, ["long task", "retry"]); // room released
+  // Finish the retry turn — don't leak its watchdog into later tests.
+  watchHandlers!.onIdle("ses1");
+  await until(() => recorded.some((r) => r.event.type === "result"));
+});
+
+test("a pending approval exempts the turn from the watchdog (human gate waits by design)", async () => {
+  reset();
+  const runW = await guardrailOrchestrator({ turnWatchdogMs: 60 });
+  await onboard("!g2", runW);
+  await runW({ conversationId: "!g2", text: "do the risky thing" });
+  watchHandlers!.onPermission({ sessionId: "ses1", permissionId: "p9", description: "git push" });
+  await until(() => recorded.some((r) => r.event.type === "approval-request"));
+  await sleep(150); // > watchdog window — no abort while the approval is pending
+  assert.equal(calls.aborted, 0);
+  assert.equal(recorded.filter((r) => r.event.type === "error").length, 0);
+  await runW({ conversationId: "!g2", text: "yes" });
+  await until(() => calls.respond.length === 1);
+  assert.deepEqual(calls.respond, [true]);
+  // Approval resolved: the turn is guarded again — finish it cleanly.
+  watchHandlers!.onIdle("ses1");
+  await until(() => recorded.some((r) => r.event.type === "result"));
+});
+
+test("session-cost cap aborts a burning turn and tells the room", async () => {
+  reset();
+  const runC = await guardrailOrchestrator({ sessionCostCapUsd: 1 });
+  await onboard("!g3", runC);
+  await runC({ conversationId: "!g3", text: "loop forever" });
+  watchHandlers!.onCostUpdate({ sessionId: "ses1", cost: 1.5 }); // >= cap (1)
+  await until(() => recorded.some((r) => r.event.type === "error" && r.event.text.includes("cost reached")));
+  assert.equal(calls.aborted, 1);
+  // Fires once — further cost updates don't re-abort.
+  watchHandlers!.onCostUpdate({ sessionId: "ses1", cost: 2.5 });
+  await sleep(50);
+  assert.equal(recorded.filter((r) => r.event.type === "error" && r.event.text.includes("cost reached")).length, 1);
+});
+
+test("duration cap aborts a turn that outlives the absolute budget", async () => {
+  reset();
+  const runD = await guardrailOrchestrator({ turnMaxMs: 200 });
+  await onboard("!g4", runD);
+  await runD({ conversationId: "!g4", text: "neverending story" });
+  await until(() => recorded.some((r) => r.event.type === "error" && r.event.text.includes("duration guardrail")));
+  assert.equal(calls.aborted, 1);
+});
+
+test("subagent sessions (foreign sessionIDs) don't finish or abort the room's turn", async () => {
+  reset();
+  const runW = await guardrailOrchestrator({ turnWatchdogMs: 60 });
+  await onboard("!g5", runW);
+  await runW({ conversationId: "!g5", text: "delegate some work" });
+  watchHandlers!.onIdle("ses_subagent_42");
+  watchHandlers!.onCostUpdate({ sessionId: "ses_subagent_42", cost: 99 });
+  // Foreign events refresh the pod's activity clock — keep the watchdog fed
+  // well past its window: nothing may finish or abort the room's turn.
+  for (let i = 0; i < 5; i++) {
+    await sleep(30);
+    watchHandlers!.onProgress({ sessionId: "ses_subagent_42", title: "subagent step" });
+  }
+  assert.equal(calls.aborted, 0);
+  assert.equal(recorded.filter((r) => r.event.type === "result" || r.event.type === "error").length, 0);
+  // The room's own turn still completes normally afterwards.
+  watchHandlers!.onIdle("ses1");
+  await until(() => recorded.some((r) => r.event.type === "result"));
 });

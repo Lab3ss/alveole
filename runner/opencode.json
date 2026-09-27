@@ -3,5 +3,10 @@
   "instructions": ["/home/node/.config/opencode/opencode-rules.md"],
   "permission": {
     "external_directory": "allow"
+  },
+  "agent": {
+    "build": {
+      "maxSteps": 200
+    }
   }
 }
