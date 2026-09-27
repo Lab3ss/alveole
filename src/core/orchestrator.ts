@@ -260,7 +260,10 @@ const make = (config: OrchestratorConfig) =>
      * abort server-side when we give up, so the turn can't silently queue the
      * next one behind a dead request. */
     const runTask = (room: Room, body: string): Effect.Effect<void> => {
-      let sentAt = 0;
+      // Initialized BEFORE any fallible step: an early failure (provision,
+      // pod wait, probe) would otherwise log "after ${Date.now() - 0}ms" —
+      // elapsed-since-epoch garbage instead of the real elapsed time.
+      let sentAt = Date.now();
       return Effect.gen(function* () {
         yield* ensureProvisioned(room); // transparently re-provisions if idle-torn-down
         yield* announce(room, "🛠️ on it…");

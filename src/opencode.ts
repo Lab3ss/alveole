@@ -19,8 +19,11 @@ import { Agent, fetch as undiciFetch } from "undici";
 // connectTimeout is separate from headersTimeout/bodyTimeout — it only bounds the TCP
 // handshake, not the wait for opencode's response — so a stuck connection (e.g. a stale
 // conntrack entry routing the SYN into a black hole) fails fast and lets the caller retry
-// on a fresh socket, instead of silently tying up the 30-minute turn budget for nothing.
-const longRunningDispatcher = new Agent({ connectTimeout: 10_000, headersTimeout: 1_800_000, bodyTimeout: 1_800_000 });
+// on a fresh socket, instead of silently tying up the 1-hour turn budget for nothing.
+// The 1h budget isn't arbitrary headroom for slow models: a turn paused on an approval
+// gate waits for a human (no timeout, by design), so the blocking POST must outlive
+// that wait. See the event-driven-turn follow-up for the real fix.
+const longRunningDispatcher = new Agent({ connectTimeout: 10_000, headersTimeout: 3_600_000, bodyTimeout: 3_600_000 });
 
 function authHeader(password: string): string {
   return "Basic " + Buffer.from(`opencode:${password}`).toString("base64");
@@ -153,45 +156,87 @@ export type SseHandlers = {
 
 /**
  * Maps one raw `/global/event` SSE payload onto the typed handlers. Kept as a
- * separate exported function so the (hand-rolled, see below) event-shape
- * guesses are unit-testable without a live opencode server.
+ * separate exported function so event-shape handling is unit-testable without
+ * a live opencode server.
  *
- * ponytail: the exact event field names below (`type`, `properties.sessionID`,
- * `.permissionID`, `.title`/`.description`, `message.part.updated`'s
- * `properties.part.{type,tool,state}`, `session.updated`'s `properties.info.cost`,
- * `session.compacted`'s `properties.sessionID`) are a best guess from opencode's
- * docs and SDK types, not confirmed against real traffic — unmatched events are
- * logged raw so the first live run makes any mismatch obvious and cheap to
- * fix in this one function.
+ * Wire shapes verified against opencode v1.18.32's generated SDK types
+ * (packages/sdk/js/src/gen/types.gen.ts at that tag):
+ * - `/global/event` streams `GlobalEvent = { directory, payload: Event }` —
+ *   every event is nested under `payload`, so dispatch unwraps it first.
+ * - Permission asks arrive as `permission.updated` with the request id in
+ *   `properties.id` (NOT `permissionID` — that field only exists on
+ *   `permission.replied`, the broker's own answer, which must not re-ask).
+ * - Tool progress is `message.part.updated` with
+ *   `properties.part.{type:"tool", state:{status,title}}`; state.status is
+ *   "pending"|"running"|"completed"|"error" — only "running" relays (a pending
+ *   part has no title yet, a completed one already showed).
+ * - `session.updated` carries the full session info incl. live `cost`.
+ * Anything else is left unmatched and logged once per type (see below) so a
+ * future opencode bump that renames fields is immediately visible instead of
+ * silently deafening the room — the failure mode this file shipped with and
+ * the one that produced 30-minute "task failed" turns waiting on approvals
+ * nobody ever saw.
  */
-export function dispatchEvent(evt: any, handlers: SseHandlers): void {
-  const props = evt.properties ?? evt;
-  if (evt.type?.includes("permission") && props.permissionID) {
-    handlers.onPermission({
-      sessionId: props.sessionID,
-      permissionId: props.permissionID,
-      description: props.title ?? props.description ?? JSON.stringify(props).slice(0, 200),
-    });
-  } else if (evt.type === "message.part.updated" && props.part?.type === "tool" && props.part.state?.status === "running") {
+export function dispatchEvent(evt: any, handlers: SseHandlers): boolean {
+  // /global/event wraps each event in { directory, payload } — unwrap, but
+  // tolerate a bare { type, properties } (project-scoped /event, tests).
+  const inner = evt?.payload?.type ? evt.payload : evt;
+  if (!inner || typeof inner !== "object") return false;
+  const props = inner.properties ?? inner;
+  if (inner.type === "permission.updated" || (typeof inner.type === "string" && inner.type.startsWith("permission.") && inner.type !== "permission.replied")) {
+    const id = props.id ?? props.permissionID;
+    if (id) {
+      handlers.onPermission({
+        sessionId: props.sessionID,
+        permissionId: id,
+        description: props.title ?? props.metadata?.command ?? props.permission ?? props.type ?? JSON.stringify(props).slice(0, 200),
+      });
+      return true;
+    }
+  } else if (inner.type === "message.part.updated" && props.part?.type === "tool" && props.part.state?.status === "running") {
     handlers.onProgress({
       sessionId: props.part.sessionID,
       title: props.part.state.title ?? props.part.tool,
     });
-  } else if (evt.type === "session.error") {
-    handlers.onSessionError({ sessionId: props.sessionID, message: JSON.stringify(props.error ?? props).slice(0, 200) });
-  } else if (evt.type === "session.updated") {
+    return true;
+  } else if (inner.type === "session.error") {
+    handlers.onSessionError({ sessionId: props.sessionID, message: props.error?.data?.message ?? props.error?.name ?? JSON.stringify(props.error ?? props).slice(0, 200) });
+    return true;
+  } else if (inner.type === "session.updated") {
     handlers.onCostUpdate({ sessionId: props.sessionID, cost: props.info?.cost });
-  } else if (evt.type === "session.compacted") {
+    return true;
+  } else if (inner.type === "session.compacted") {
     handlers.onCompacted(props.sessionID);
+    return true;
   }
+  return false;
 }
+
+// Unknown/never-matched event types are logged once, not per occurrence: the
+// /global/event stream is chatty, but any given unrecognized type either
+// appears once (one-shot events) or constantly (streams like text deltas) —
+// in both cases one sample line in kubectl logs is all a human needs.
+const seenUnmatchedTypes = new Set<string>();
 
 /** Feed one raw SSE `data:` line (already trimmed of its prefix) to dispatchEvent. */
 function dispatchDataLine(line: string, handlers: SseHandlers): void {
+  let evt: any;
   try {
-    dispatchEvent(JSON.parse(line), handlers);
+    evt = JSON.parse(line);
   } catch {
-    // Not JSON or not a shape we recognize — ignore rather than crash the watcher.
+    const key = "<non-json>";
+    if (!seenUnmatchedTypes.has(key)) {
+      seenUnmatchedTypes.add(key);
+      console.warn(`[opencode] unparseable SSE data line (logged once): ${line.slice(0, 200)}`);
+    }
+    return;
+  }
+  if (!dispatchEvent(evt, handlers)) {
+    const type = typeof evt?.payload?.type === "string" ? evt.payload.type : typeof evt?.type === "string" ? evt.type : "<none>";
+    if (!seenUnmatchedTypes.has(type)) {
+      seenUnmatchedTypes.add(type);
+      console.warn(`[opencode] unmatched SSE event type "${type}" (logged once): ${JSON.stringify(evt).slice(0, 300)}`);
+    }
   }
 }
 

@@ -11,7 +11,11 @@ set -eu
 if [ -n "${AGENT_RULES:-}" ]; then
   echo "[runner] applying channel agent rules from env..."
   printf '%s\n' "$AGENT_RULES" > /home/node/.config/opencode/channel-rules.md
-  printf '%s\n' '{"$schema": "https://opencode.ai/config.json", "instructions": ["/home/node/.config/opencode/channel-rules.md"]}' \
+  # Same permissions as the baked-in opencode.json below (this overwrite replaces
+  # that file wholesale): scratch writes outside the workspace (e.g. /tmp) are
+  # harmless in this disposable pod, and an "ask" here stalls the turn on an
+  # approval that would otherwise have to be relayed for nothing.
+  printf '%s\n' '{"$schema": "https://opencode.ai/config.json", "instructions": ["/home/node/.config/opencode/channel-rules.md"], "permission": {"external_directory": "allow"}}' \
     > /home/node/.config/opencode/opencode.json
 fi
 
