@@ -366,11 +366,16 @@ const make = (config: OrchestratorConfig) =>
         yield* announce(room, "📦 creating pod…");
         const password = yield* workspace.provision(name, { repo: room.repo!, token: room.token! }, adapter.capabilities.agentRules);
         serverPasswords.set(room.roomId, password);
+        // Record podName as soon as the pod exists, not after it's confirmed
+        // healthy — otherwise a crash during waitForRunning/createSession
+        // leaks the pod with no registry pointer, so self-heal (above) can
+        // never find and clean it up on the next attempt.
+        room.podName = name;
+        registry.save(room);
         yield* announce(room, "⏳ waiting for pod to start (cloning repo)…");
         yield* workspace.waitForRunning(name);
         yield* announce(room, "🔌 pod running, connecting to opencode server…");
         const sessionId = yield* workspace.createSession(workspace.serverUrl(name), password);
-        room.podName = name;
         room.sessionId = sessionId;
         registry.save(room);
         yield* startWatcher(room);
