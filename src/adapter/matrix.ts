@@ -84,8 +84,6 @@ function render(event: OutboundEvent): string {
       return event.text;
     case "result":
       return event.text;
-    case "progress":
-      return `🔧 ${event.title}`;
     case "error":
       return `⚠️ ${event.text}`;
     case "approval-request":

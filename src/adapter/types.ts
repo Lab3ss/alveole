@@ -46,7 +46,6 @@ export type OutboundEvent =
   | { readonly type: "status"; readonly text: string }
   | { readonly type: "info"; readonly text: string }
   | { readonly type: "result"; readonly text: string }
-  | { readonly type: "progress"; readonly title: string }
   | { readonly type: "error"; readonly text: string }
   | { readonly type: "usage"; readonly text: string }
   | { readonly type: "approval-request"; readonly description: string }

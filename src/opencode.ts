@@ -319,8 +319,9 @@ const SSE_RETRY_MAX_MS = 30_000;
 
 /**
  * Opens the room's SSE event stream and dispatches permission requests,
- * per-tool-call progress (so a long turn isn't silent end-to-end), session
- * errors, live cost updates (for the $-spent alert), and compaction events
+ * per-tool-call activity (feeds the inactivity watchdog and the broker log —
+ * tool progress is deliberately NOT relayed to the room), session errors,
+ * live cost updates (for the $-spent alert), and compaction events
  * (context got trimmed).
  *
  * Reconnects forever with capped exponential backoff until the returned stop()

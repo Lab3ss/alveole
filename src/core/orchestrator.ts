@@ -248,10 +248,11 @@ const make = (config: OrchestratorConfig) =>
           onProgress: (progress) => {
             markActivity();
             if (progress.sessionId !== room.sessionId) return;
+            // Tool-by-tool activity stays in the broker log only — relaying
+            // every command to the room flooded it. The room hears errors,
+            // results, and approvals; the log's 🔧 lines are what the
+            // watchdog-abort diagnosis above cross-references.
             console.log(`[${room.roomId}] 🔧 ${progress.title}`);
-            void Effect.runPromise(
-              send(room.roomId, { type: "progress", title: progress.title }),
-            ).catch((err) => console.warn(`[${room.roomId}] failed to send progress:`, describeError(err)));
           },
           onSessionError: (sessErr) => {
             markActivity();
