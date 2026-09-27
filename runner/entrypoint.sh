@@ -11,11 +11,12 @@ set -eu
 if [ -n "${AGENT_RULES:-}" ]; then
   echo "[runner] applying channel agent rules from env..."
   printf '%s\n' "$AGENT_RULES" > /home/node/.config/opencode/channel-rules.md
-  # Same permissions as the baked-in opencode.json below (this overwrite replaces
-  # that file wholesale): scratch writes outside the workspace (e.g. /tmp) are
-  # harmless in this disposable pod, and an "ask" here stalls the turn on an
-  # approval that would otherwise have to be relayed for nothing.
-  printf '%s\n' '{"$schema": "https://opencode.ai/config.json", "instructions": ["/home/node/.config/opencode/channel-rules.md"], "permission": {"external_directory": "allow"}}' \
+  # Same permission/maxSteps settings as the baked-in opencode.json below (this
+  # overwrite replaces that file wholesale): scratch writes outside the
+  # workspace (e.g. /tmp) are harmless in this disposable pod and an "ask"
+  # here would stall the turn on an approval relayed for nothing; maxSteps
+  # bounds an agent looping forever (opencode forces a text-only response).
+  printf '%s\n' '{"$schema": "https://opencode.ai/config.json", "instructions": ["/home/node/.config/opencode/channel-rules.md"], "permission": {"external_directory": "allow"}, "agent": {"build": {"maxSteps": 200}}}' \
     > /home/node/.config/opencode/opencode.json
 fi
 

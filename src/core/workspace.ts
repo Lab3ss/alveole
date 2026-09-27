@@ -33,7 +33,7 @@ export type WorkspaceError =
   | "secret-read-failed" // couldn't read back the room's server password
   | "session-create-failed" // opencode POST /session kept failing
   | "probe-failed" // connectivity probe kept failing (wedged connection)
-  | "message-send-failed" // opencode rejected/lost the prompt turn
+  | "messages-fetch-failed" // GET /session/:id/message failed (reply retrieval after a turn)
   | "session-abort-failed" // couldn't stop a turn the core gave up on
   | "usage-fetch-failed" // GET /session/:id failed
   | "permission-respond-failed" // POSTing an approval decision failed
@@ -51,6 +51,7 @@ export type WatchHandlers = {
   onSessionError: (err: opencode.SessionError) => void;
   onCostUpdate: (update: opencode.SessionCostUpdate) => void;
   onCompacted: (sessionId: string) => void;
+  onIdle: (sessionId: string) => void;
   onError: (err: unknown) => void;
 };
 
@@ -74,13 +75,22 @@ export interface WorkspaceService {
   readonly createSession: (baseUrl: string, password: string) => Effect.Effect<string, Failure<"session-create-failed">>;
   /** Bounded connectivity probe, retried — fails fast on a wedged connection. */
   readonly probe: (baseUrl: string, password: string) => Effect.Effect<void, Failure<"probe-failed">>;
-  readonly sendMessage: (
+  readonly sendPrompt: (
     baseUrl: string,
     password: string,
     sessionId: string,
     text: string,
-    model?: string,
-  ) => Effect.Effect<string, Failure<"message-send-failed">>;
+    model: string | undefined,
+    onDone: (err: string | undefined) => void,
+  ) => Effect.Effect<void>;
+  /** Pulls a finished turn's user-facing result from the message list:
+ * { text } on success, { error } when the turn was rejected (e.g. context
+ * too large), { text: "" } when the turn produced no text at all. */
+  readonly turnResult: (
+    baseUrl: string,
+    password: string,
+    sessionId: string,
+  ) => Effect.Effect<{ text: string; error?: string }, Failure<"messages-fetch-failed">>;
   /** Stops a turn that the core gave up on, so it can't queue future ones. */
   readonly abort: (baseUrl: string, password: string, sessionId: string) => Effect.Effect<void, Failure<"session-abort-failed">>;
   readonly usage: (
@@ -158,8 +168,13 @@ const makeWorkspace = (config: { openrouterKey: string }): WorkspaceService => (
       retryUntilReady(() => opencode.createSession(baseUrl, password, AbortSignal.timeout(10_000))),
     ),
   probe: (baseUrl, password) => failing("probe-failed", () => retryUntilReady(() => opencode.probeConnection(baseUrl, password))),
-  sendMessage: (baseUrl, password, sessionId, text, model) =>
-    failing("message-send-failed", () => opencode.sendMessage(baseUrl, password, sessionId, text, model)),
+  sendPrompt: (baseUrl, password, sessionId, text, model, onDone) =>
+    Effect.sync(() => opencode.sendPrompt(baseUrl, password, sessionId, text, model, onDone)),
+  turnResult: (baseUrl, password, sessionId) =>
+    Effect.map(
+      failing("messages-fetch-failed", () => opencode.getMessages(baseUrl, password, sessionId)),
+      (messages) => opencode.extractTurnResult(messages),
+    ),
   abort: (baseUrl, password, sessionId) => failing("session-abort-failed", () => opencode.abortSession(baseUrl, password, sessionId)),
   usage: (baseUrl, password, sessionId) => failing("usage-fetch-failed", () => opencode.getSessionUsage(baseUrl, password, sessionId)),
   respondPermission: (baseUrl, password, sessionId, permissionId, approved) =>
@@ -174,6 +189,7 @@ const makeWorkspace = (config: { openrouterKey: string }): WorkspaceService => (
         handlers.onSessionError,
         handlers.onCostUpdate,
         handlers.onCompacted,
+        handlers.onIdle,
         handlers.onError,
       ),
     ),

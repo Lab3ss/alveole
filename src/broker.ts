@@ -30,6 +30,12 @@ if (!openrouterKey) throw new Error("OPENROUTER_API_KEY required");
 const orchestratorConfig = {
   idleTeardownMs: parseFloat(process.env.IDLE_TEARDOWN_HOURS ?? "24") * 3600_000,
   sweepIntervalMs: 15 * 60_000,
+  // Turn guardrails (async turn): inactivity watchdog, absolute duration cap,
+  // session-cost circuit-breaker. All three abort the turn server-side and
+  // tell the room; 0 disables (except the cost cap, where 0 means "free").
+  turnWatchdogMs: parseFloat(process.env.TURN_WATCHDOG_MINUTES ?? "15") * 60_000,
+  turnMaxMs: parseFloat(process.env.TURN_MAX_HOURS ?? "4") * 3600_000,
+  sessionCostCapUsd: parseFloat(process.env.SESSION_COST_CAP_USD ?? "10"),
 };
 
 const AppLayer = OrchestratorLive(orchestratorConfig).pipe(

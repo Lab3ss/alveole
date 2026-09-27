@@ -100,6 +100,9 @@ via `envFrom` works well):
 | `ROOMS_NAMESPACE` | where per-room pods live; default `coding-agent-rooms` |
 | `RUNNER_IMAGE` | runner image tag; default `ghcr.io/lab3ss/coding-agent-runner:0.2.1` |
 | `IDLE_TEARDOWN_HOURS` | idle threshold before auto-teardown; default `24` |
+| `TURN_WATCHDOG_MINUTES` | abort a turn with no agent activity this long (approval waits exempt); default `15`, `0` disables |
+| `TURN_MAX_HOURS` | absolute turn duration cap; default `4`, `0` disables |
+| `SESSION_COST_CAP_USD` | abort a turn once the session's cost reaches this — the circuit-breaker against a looping agent; default `10`, `0` disables |
 
 Notes:
 
