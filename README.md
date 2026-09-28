@@ -98,7 +98,7 @@ via `envFrom` works well):
 | `MATRIX_HOMESERVER`, `MATRIX_TOKEN` | the bot's Matrix account |
 | `OPENROUTER_API_KEY` | the only LLM credential, copied into every room's pod |
 | `ROOMS_NAMESPACE` | where per-room pods live; default `coding-agent-rooms` |
-| `RUNNER_IMAGE` | runner image tag; default `ghcr.io/lab3ss/coding-agent-runner:0.2.2` |
+| `RUNNER_IMAGE` | runner image tag; default `ghcr.io/lab3ss/coding-agent-runner:0.3.0` |
 | `IDLE_TEARDOWN_HOURS` | idle threshold before auto-teardown; default `24` |
 | `TURN_WATCHDOG_MINUTES` | abort a turn with no agent activity this long (approval waits exempt); default `15`, `0` disables |
 | `TURN_MAX_HOURS` | absolute turn duration cap; default `4`, `0` disables |
