@@ -3,6 +3,11 @@
   "instructions": ["/home/node/.config/opencode/opencode-rules.md"],
   "permission": {
     "*": "allow",
+    "bash": {
+      "*": "allow",
+      "git push": "ask",
+      "git push *": "ask"
+    },
     "external_directory": "allow"
   },
   "agent": {

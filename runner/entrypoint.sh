@@ -18,10 +18,12 @@ if [ -n "${AGENT_RULES:-}" ]; then
   # every read/edit/bash prompt mid-turn (each ask relayed to the room as an
   # approval). external_directory is redundant under "*" but kept explicit: it's
   # the deliberate choice that scratch writes outside the workspace (e.g. /tmp)
-  # are harmless in this disposable pod. Loop/stall safety lives at the broker
+  # are harmless in this disposable pod. One deliberate guard: git push asks
+  # (object rules after "*" win — findLast) and relays to the room via the
+  # broker's approval flow. Loop/stall safety lives at the broker
   # (watchdog, cost cap) plus maxSteps below (bounds an agent looping forever;
   # opencode forces a text-only response at the cap).
-  printf '%s\n' '{"$schema": "https://opencode.ai/config.json", "instructions": ["/home/node/.config/opencode/channel-rules.md"], "permission": {"*": "allow", "external_directory": "allow"}, "agent": {"build": {"maxSteps": 200}}}' \
+  printf '%s\n' '{"$schema": "https://opencode.ai/config.json", "instructions": ["/home/node/.config/opencode/channel-rules.md"], "permission": {"*": "allow", "bash": {"*": "allow", "git push": "ask", "git push *": "ask"}, "external_directory": "allow"}, "agent": {"build": {"maxSteps": 200}}}' \
     > /home/node/.config/opencode/opencode.json
 fi
 
