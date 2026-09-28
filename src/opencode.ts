@@ -234,7 +234,11 @@ export type SseHandlers = {
  * (packages/sdk/js/src/gen/types.gen.ts at that tag):
  * - `/global/event` streams `GlobalEvent = { directory, payload: Event }` —
  *   every event is nested under `payload`, so dispatch unwraps it first.
- * - Permission asks arrive as `permission.updated` with the request id in
+ * - Permission asks: the legacy `permission.updated` (title-bearing) and the
+ *   v1.18.x `permission.asked` shape both route to onPermission. The latter
+ *   carries no title — just { permission: "read", patterns: [".env.example"],
+ *   metadata: {} } — so the description is BUILT (see describePermissionAsk):
+ *   a bare "read" tells the approver nothing. The request id lives in
  *   `properties.id` (NOT `permissionID` — that field only exists on
  *   `permission.replied`, the broker's own answer, which must not re-ask).
  * - Tool progress is `message.part.updated` with
@@ -248,6 +252,33 @@ export type SseHandlers = {
  * the one that produced 30-minute "task failed" turns waiting on approvals
  * nobody ever saw.
  */
+/**
+ * Builds a room-visible description of a permission ask — "what am I actually
+ * approving?" A bare permission name ("read") is useless to a human. Shapes
+ * seen at opencode v1.18.32:
+ * - v1 `permission.asked`: { permission: "read", patterns: [".env.example"],
+ *   metadata: {} } — no title; the pattern IS the subject.
+ * - bash/edit asks carry `metadata.command` / `metadata.filepath`.
+ * - v2 `permission.v2.asked`: { action: "read", resources: ["/abs/path"] }.
+ * - legacy `permission.updated`: human `title` when present.
+ * Preference: a command stands alone; otherwise name ("read"|"edit"|…)
+ * followed by the first available concrete subject, else the raw props.
+ */
+function describePermissionAsk(props: any): string {
+  const command = typeof props.metadata?.command === "string" && props.metadata.command ? props.metadata.command : undefined;
+  if (command) return command;
+  const name: string | undefined = props.title ?? props.permission ?? props.action ?? props.type;
+  const list = (v: unknown): string | undefined =>
+    Array.isArray(v) && v.length > 0 ? v.join(", ") : undefined;
+  const resource =
+    list(props.patterns) ??
+    (typeof props.metadata?.filepath === "string" ? props.metadata.filepath : undefined) ??
+    list(props.resources);
+  if (name && resource) return `${name}: ${resource}`;
+  if (name) return name;
+  return JSON.stringify(props).slice(0, 200);
+}
+
 export function dispatchEvent(evt: any, handlers: SseHandlers): boolean {
   // /global/event wraps each event in { directory, payload } — unwrap, but
   // tolerate a bare { type, properties } (project-scoped /event, tests).
@@ -260,7 +291,7 @@ export function dispatchEvent(evt: any, handlers: SseHandlers): boolean {
       handlers.onPermission({
         sessionId: props.sessionID,
         permissionId: id,
-        description: props.title ?? props.metadata?.command ?? props.permission ?? props.type ?? JSON.stringify(props).slice(0, 200),
+        description: describePermissionAsk(props),
       });
       return true;
     }
