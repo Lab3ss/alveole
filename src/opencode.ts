@@ -195,6 +195,13 @@ export async function getSessionUsage(baseUrl: string, password: string, session
   return { cost: session?.cost, tokens: session?.tokens, compactedAt: session?.time?.compacting };
 }
 
+/**
+ * Answers a permission ask. Wire vocabulary verified against the pod's
+ * opencode (runner 0.2.2): `response` is "once" | "always" | "reject" — an
+ * older "allow"/"deny" body gets a 400 and the turn hangs on the gate
+ * forever. Approval maps to "once" (this ask only; the room prompt is a
+ * boolean yes/no, no "always this session" affordance yet).
+ */
 export async function respondPermission(
   baseUrl: string,
   password: string,
@@ -204,7 +211,7 @@ export async function respondPermission(
 ): Promise<void> {
   await req(baseUrl, password, `/session/${sessionId}/permissions/${permissionId}`, {
     method: "POST",
-    body: JSON.stringify({ response: approved ? "allow" : "deny" }),
+    body: JSON.stringify({ response: approved ? "once" : "reject" }),
   });
 }
 
@@ -327,7 +334,7 @@ const SSE_RETRY_MAX_MS = 30_000;
  * Reconnects forever with capped exponential backoff until the returned stop()
  * is called — opencode's stream drops on any transient network blip, pod
  * restart, or proxy idle timeout, and a dead watcher silently kills the
- * approval flow (opencode waits for an allow/deny that is never relayed, so
+ * approval flow (opencode waits for a decision that is never relayed, so
  * the turn hangs forever with zero feedback in the room). The broker's
  * startPermissionWatcher() early-returns while a watcher entry exists, so
  * without internal reconnection a single drop would permanently deafen the
