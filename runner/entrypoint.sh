@@ -12,11 +12,18 @@ if [ -n "${AGENT_RULES:-}" ]; then
   echo "[runner] applying channel agent rules from env..."
   printf '%s\n' "$AGENT_RULES" > /home/node/.config/opencode/channel-rules.md
   # Same permission/maxSteps settings as the baked-in opencode.json below (this
-  # overwrite replaces that file wholesale): scratch writes outside the
-  # workspace (e.g. /tmp) are harmless in this disposable pod and an "ask"
-  # here would stall the turn on an approval relayed for nothing; maxSteps
-  # bounds an agent looping forever (opencode forces a text-only response).
-  printf '%s\n' '{"$schema": "https://opencode.ai/config.json", "instructions": ["/home/node/.config/opencode/channel-rules.md"], "permission": {"external_directory": "allow"}, "agent": {"build": {"maxSteps": 200}}}' \
+  # overwrite replaces that file wholesale): "*" allow restores allow-by-default
+  # for every tool — since v1.18.32's permission evaluator treats any rule NOT
+  # matched by config as "ask", a config that only lists external_directory made
+  # every read/edit/bash prompt mid-turn (each ask relayed to the room as an
+  # approval). external_directory is redundant under "*" but kept explicit: it's
+  # the deliberate choice that scratch writes outside the workspace (e.g. /tmp)
+  # are harmless in this disposable pod. One deliberate guard: git push asks
+  # (object rules after "*" win — findLast) and relays to the room via the
+  # broker's approval flow. Loop/stall safety lives at the broker
+  # (watchdog, cost cap) plus maxSteps below (bounds an agent looping forever;
+  # opencode forces a text-only response at the cap).
+  printf '%s\n' '{"$schema": "https://opencode.ai/config.json", "instructions": ["/home/node/.config/opencode/channel-rules.md"], "permission": {"*": "allow", "bash": {"*": "allow", "git push": "ask", "git push *": "ask"}, "external_directory": "allow"}, "agent": {"build": {"maxSteps": 200}}}' \
     > /home/node/.config/opencode/opencode.json
 fi
 

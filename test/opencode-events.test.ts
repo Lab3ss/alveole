@@ -70,6 +70,56 @@ test("permission.replied (our own answer echoed back) does not re-ask", () => {
   assert.equal(h.calls.onPermission.length, 0);
 });
 
+test("v1.18 permission.asked: bare permission name + pattern becomes 'read: .env.example'", () => {
+  const h = recording();
+  dispatchEvent(
+    {
+      type: "permission.asked",
+      properties: {
+        id: "per_3",
+        sessionID: "ses1",
+        permission: "read",
+        patterns: [".env.example"],
+        metadata: {},
+        always: ["*"],
+      },
+    },
+    h,
+  );
+  assert.deepEqual(h.calls.onPermission, [{ sessionId: "ses1", permissionId: "per_3", description: "read: .env.example" }]);
+});
+
+test("edit ask prefers the workspace-relative pattern over the absolute metadata filepath", () => {
+  const h = recording();
+  dispatchEvent(
+    {
+      type: "permission.asked",
+      properties: {
+        id: "per_4",
+        sessionID: "ses1",
+        permission: "edit",
+        patterns: ["src/a.ts"],
+        metadata: { filepath: "/home/node/workspace/src/a.ts", diff: "..." },
+        always: ["*"],
+      },
+    },
+    h,
+  );
+  assert.deepEqual(h.calls.onPermission, [{ sessionId: "ses1", permissionId: "per_4", description: "edit: src/a.ts" }]);
+});
+
+test("v2 permission.v2.asked builds the description from action + resources", () => {
+  const h = recording();
+  dispatchEvent(
+    {
+      type: "permission.v2.asked",
+      properties: { id: "per_5", sessionID: "ses1", action: "bash", resources: ["git push origin main"] },
+    },
+    h,
+  );
+  assert.deepEqual(h.calls.onPermission, [{ sessionId: "ses1", permissionId: "per_5", description: "bash: git push origin main" }]);
+});
+
 test("tool-running event routes to onProgress", () => {
   const h = recording();
   dispatchEvent(
