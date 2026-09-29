@@ -52,7 +52,10 @@ Two pieces:
   runs a headless `opencode serve`. Nothing persists: a fresh pod means a
   fresh clone and a fresh session. The broker relays opencode's own
   permission prompts (shell commands, `git push`, …) back into the room as
-  yes/no questions.
+  yes/no questions. The image ships the Node + Python toolchains (plus
+  [`uv`](https://docs.astral.sh/uv/)) so agents can run builds/tests for the
+  common stacks; other languages belong in a per-room image override rather
+  than a fatter default.
 
 ## Usage
 

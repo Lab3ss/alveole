@@ -9,11 +9,23 @@ FROM node:22-bookworm-slim
 # behavior/APIs between otherwise identical deployments). Bump deliberately.
 ARG OPENCODE_VERSION=1.18.32
 
+# Python toolchain, alongside the base image's Node. This is the pragmatic middle
+# ground for "multi-language repos": one shared image that covers the common
+# Node + Python case, so the agent can run pytest/ruff/etc. out of the box.
+# uv is pinned for the same reason as opencode above — it drives venv creation
+# (and can install its own Python interpreters) so projects using
+# pyproject.toml/uv.lock work without extra setup. For other stacks (Go, Rust,
+# JVM, system deps), the intended extension point is still a per-room image
+# override rather than growing this one image indefinitely.
+ARG UV_VERSION=0.12.20
+
 RUN apt-get update \
  && apt-get install -y --no-install-recommends git ca-certificates \
+      python3 python3-venv python3-pip \
  && rm -rf /var/lib/apt/lists/*
 
-RUN npm install -g --no-fund --no-audit "opencode-ai@${OPENCODE_VERSION}"
+RUN npm install -g --no-fund --no-audit "opencode-ai@${OPENCODE_VERSION}" \
+ && pip3 install --no-cache-dir --break-system-packages "uv==${UV_VERSION}"
 
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh && chown node:node /entrypoint.sh
