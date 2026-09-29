@@ -215,10 +215,31 @@ export async function respondPermission(
   });
 }
 
+/**
+ * Answers a `question.asked` ask (opencode's native "ask the user a
+ * clarifying question" tool — see dispatchEvent). Wire shape verified
+ * against the pod's opencode 1.18.32 binary (no public docs): `answers` is
+ * one array-of-labels per question, in question order — a question allowing
+ * multiple selections gets more than one label in its array.
+ */
+export async function answerQuestion(
+  baseUrl: string,
+  password: string,
+  sessionId: string,
+  requestId: string,
+  answers: string[][],
+): Promise<void> {
+  await req(baseUrl, password, `/session/${sessionId}/question/${requestId}/reply`, {
+    method: "POST",
+    body: JSON.stringify({ answers }),
+  });
+}
+
 export type PermissionRequest = { sessionId: string; permissionId: string; description: string };
 export type ToolProgress = { sessionId: string; title: string };
 export type SessionError = { sessionId?: string; message: string };
 export type SessionCostUpdate = { sessionId: string; cost?: number };
+export type QuestionAsk = { sessionId: string; requestId: string; description: string; count: number };
 
 export type SseHandlers = {
   onPermission: (req: PermissionRequest) => void;
@@ -230,6 +251,10 @@ export type SseHandlers = {
    * transitioning to idle). Fires for ANY session of the pod (subagents have
    * their own sessionIDs) — callers filter. */
   onIdle: (sessionId: string) => void;
+  /** opencode's model called its "ask the user" tool and is blocked on an
+   * answer — same human-gate shape as onPermission, but for free-form
+   * clarifying questions instead of a yes/no. */
+  onQuestion: (ask: QuestionAsk) => void;
 };
 
 /**
@@ -253,6 +278,10 @@ export type SseHandlers = {
  *   "pending"|"running"|"completed"|"error" — only "running" relays (a pending
  *   part has no title yet, a completed one already showed).
  * - `session.updated` carries the full session info incl. live `cost`.
+ * - `question.asked`: opencode's native "ask the user" tool — another human
+ *   gate, same shape as a permission ask, but for a clarifying question
+ *   instead of a yes/no (wire shape reverse-engineered from the pod's
+ *   opencode 1.18.32 binary; no public docs for this one).
  * Anything else is left unmatched and logged once per type (see below) so a
  * future opencode bump that renames fields is immediately visible instead of
  * silently deafening the room — the failure mode this file shipped with and
@@ -284,6 +313,23 @@ function describePermissionAsk(props: any): string {
   if (name && resource) return `${name}: ${resource}`;
   if (name) return name;
   return JSON.stringify(props).slice(0, 200);
+}
+
+/**
+ * Builds a room-visible description of a question ask — one line per
+ * question, numbered only when there's more than one (so a single question,
+ * the common case, reads as plain prose). Options are listed so a human
+ * knows the exact labels opencode expects back; the wire's `custom` flag
+ * (free-text allowed) isn't enforced here — a chat reply is always free text.
+ */
+function describeQuestions(questions: Array<{ question: string; options?: Array<{ label: string }> }>): string {
+  return questions
+    .map((q, i) => {
+      const prefix = questions.length > 1 ? `${i + 1}. ` : "";
+      const options = q.options?.length ? ` (options: ${q.options.map((o) => o.label).join(", ")})` : "";
+      return `${prefix}${q.question}${options}`;
+    })
+    .join("\n");
 }
 
 export function dispatchEvent(evt: any, handlers: SseHandlers): boolean {
@@ -319,6 +365,15 @@ export function dispatchEvent(evt: any, handlers: SseHandlers): boolean {
     return true;
   } else if (inner.type === "session.idle" || (inner.type === "session.status" && props.status?.type === "idle")) {
     handlers.onIdle(props.sessionID);
+    return true;
+  } else if (inner.type === "question.asked") {
+    const questions = Array.isArray(props.questions) ? props.questions : [];
+    handlers.onQuestion({
+      sessionId: props.sessionID,
+      requestId: props.id,
+      description: describeQuestions(questions),
+      count: questions.length,
+    });
     return true;
   }
   return false;
@@ -385,10 +440,11 @@ export async function watchPermissions(
   onCostUpdate: (update: SessionCostUpdate) => void,
   onCompacted: (sessionId: string) => void,
   onIdle: (sessionId: string) => void,
+  onQuestion: (ask: QuestionAsk) => void,
   onError: (err: unknown) => void,
 ): Promise<() => void> {
   const controller = new AbortController();
-  const handlers: SseHandlers = { onPermission, onProgress, onSessionError, onCostUpdate, onCompacted, onIdle };
+  const handlers: SseHandlers = { onPermission, onProgress, onSessionError, onCostUpdate, onCompacted, onIdle, onQuestion };
 
   (async () => {
     let attempt = 0;

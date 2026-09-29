@@ -21,7 +21,7 @@ import * as opencode from "../opencode.ts";
 import { describeError } from "../util.ts";
 
 export type { RoomPodState, RoomEnv } from "../k8s.ts";
-export type { SessionUsage, PermissionRequest, ToolProgress, SessionError, SessionCostUpdate } from "../opencode.ts";
+export type { SessionUsage, PermissionRequest, ToolProgress, SessionError, SessionCostUpdate, QuestionAsk } from "../opencode.ts";
 
 /** Stable failure codes for the workspace seam. Raw causes are logged where
  * they happen (see `failing`), never propagated. */
@@ -37,6 +37,7 @@ export type WorkspaceError =
   | "session-abort-failed" // couldn't stop a turn the core gave up on
   | "usage-fetch-failed" // GET /session/:id failed
   | "permission-respond-failed" // POSTing an approval decision failed
+  | "question-respond-failed" // POSTing a question answer failed
   | "watch-failed"; // SSE event stream couldn't be opened
 
 /** A workspace failure: the stable `code` (for callers to switch on) plus
@@ -52,6 +53,7 @@ export type WatchHandlers = {
   onCostUpdate: (update: opencode.SessionCostUpdate) => void;
   onCompacted: (sessionId: string) => void;
   onIdle: (sessionId: string) => void;
+  onQuestion: (ask: opencode.QuestionAsk) => void;
   onError: (err: unknown) => void;
 };
 
@@ -105,6 +107,13 @@ export interface WorkspaceService {
     permissionId: string,
     approved: boolean,
   ) => Effect.Effect<void, Failure<"permission-respond-failed">>;
+  readonly answerQuestion: (
+    baseUrl: string,
+    password: string,
+    sessionId: string,
+    requestId: string,
+    answers: string[][],
+  ) => Effect.Effect<void, Failure<"question-respond-failed">>;
   /** Opens the SSE stream; resolves to a stop function. Handlers run detached. */
   readonly watch: (
     baseUrl: string,
@@ -187,6 +196,8 @@ const makeWorkspace = (config: { openrouterKey: string }): WorkspaceService => (
   usage: (baseUrl, password, sessionId) => failing("usage-fetch-failed", () => opencode.getSessionUsage(baseUrl, password, sessionId)),
   respondPermission: (baseUrl, password, sessionId, permissionId, approved) =>
     failing("permission-respond-failed", () => opencode.respondPermission(baseUrl, password, sessionId, permissionId, approved)),
+  answerQuestion: (baseUrl, password, sessionId, requestId, answers) =>
+    failing("question-respond-failed", () => opencode.answerQuestion(baseUrl, password, sessionId, requestId, answers)),
   watch: (baseUrl, password, handlers) =>
     failing("watch-failed", () =>
       opencode.watchPermissions(
@@ -198,6 +209,7 @@ const makeWorkspace = (config: { openrouterKey: string }): WorkspaceService => (
         handlers.onCostUpdate,
         handlers.onCompacted,
         handlers.onIdle,
+        handlers.onQuestion,
         handlers.onError,
       ),
     ),

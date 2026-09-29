@@ -10,6 +10,7 @@ function recording(): SseHandlers & { calls: Record<string, any[]> } {
     onCostUpdate: [],
     onCompacted: [],
     onIdle: [],
+    onQuestion: [],
   };
   return {
     calls,
@@ -19,6 +20,7 @@ function recording(): SseHandlers & { calls: Record<string, any[]> } {
     onCostUpdate: (u) => calls.onCostUpdate.push(u),
     onCompacted: (s) => calls.onCompacted.push(s),
     onIdle: (s) => calls.onIdle.push(s),
+    onQuestion: (ask) => calls.onQuestion.push(ask),
   };
 }
 
@@ -203,6 +205,41 @@ test("nested payload without a type is not double-unwrapped into a bare event", 
   const h = recording();
   dispatchEvent({ directory: "/x", payload: { properties: { sessionID: "ses1" } } }, h);
   assert.equal(h.calls.onCompacted.length, 0);
+});
+
+test("question.asked routes to onQuestion, numbering only when there's more than one question", () => {
+  const h = recording();
+  dispatchEvent(
+    {
+      type: "question.asked",
+      properties: {
+        id: "que_1",
+        sessionID: "ses1",
+        questions: [
+          { question: "Which env?", options: [{ label: "staging" }, { label: "prod" }] },
+          { question: "Which branch?" },
+        ],
+      },
+    },
+    h,
+  );
+  assert.deepEqual(h.calls.onQuestion, [
+    {
+      sessionId: "ses1",
+      requestId: "que_1",
+      description: "1. Which env? (options: staging, prod)\n2. Which branch?",
+      count: 2,
+    },
+  ]);
+});
+
+test("a single question isn't numbered", () => {
+  const h = recording();
+  dispatchEvent(
+    { type: "question.asked", properties: { id: "que_2", sessionID: "ses1", questions: [{ question: "Which env?" }] } },
+    h,
+  );
+  assert.deepEqual(h.calls.onQuestion, [{ sessionId: "ses1", requestId: "que_2", description: "Which env?", count: 1 }]);
 });
 
 test("session.idle and session.status:idle both signal turn completion", () => {

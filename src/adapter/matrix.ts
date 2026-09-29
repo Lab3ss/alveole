@@ -90,6 +90,8 @@ function render(event: OutboundEvent): string {
       return `🔐 Approval needed:\n${event.description}\nReply *yes* to allow, anything else to deny. No rush — I'll wait as long as it takes.`;
     case "approval-result":
       return event.approved ? "✅ Approved — proceeding." : "🚫 Denied.";
+    case "question":
+      return `❓ ${event.description}\nReply with your answer${event.description.includes("\n") ? "s, one per line" : ""}. No rush — I'll wait as long as it takes.`;
     case "cost-alert":
       return `💸 ~$${event.stepUsd} spent so far this session. Send /usage for the full breakdown.`;
     case "compacted":

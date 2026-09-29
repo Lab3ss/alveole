@@ -50,6 +50,7 @@ export type OutboundEvent =
   | { readonly type: "usage"; readonly text: string }
   | { readonly type: "approval-request"; readonly description: string }
   | { readonly type: "approval-result"; readonly approved: boolean }
+  | { readonly type: "question"; readonly description: string }
   | { readonly type: "cost-alert"; readonly stepUsd: number }
   | { readonly type: "compacted" }
   | { readonly type: "token-received"; readonly redacted: boolean }

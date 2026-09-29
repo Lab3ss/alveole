@@ -72,6 +72,10 @@ const make = (config: OrchestratorConfig) =>
     const serverPasswords = new Map<string, string>();
     const permissionWatchers = new Map<string, () => void>();
     const pendingApprovals = new Map<string, (approved: boolean) => void>();
+    /** A room-blocking `question.asked` ask, same human-gate shape as
+     * pendingApprovals — `count` tells the inbound handler how many
+     * newline-separated answers to expect back. */
+    const pendingQuestions = new Map<string, { resolve: (answers: string[][]) => void; count: number }>();
     const busyRooms = new Set<string>();
     const lastAlertedCostUsd = new Map<string, number>();
 
@@ -118,6 +122,9 @@ const make = (config: OrchestratorConfig) =>
       // the response — resolve it (denied) so the wait doesn't dangle.
       pendingApprovals.get(conversationId)?.(false);
       pendingApprovals.delete(conversationId);
+      // Same for a pending question — nothing left to answer.
+      pendingQuestions.get(conversationId)?.resolve([]);
+      pendingQuestions.delete(conversationId);
     }
 
     /** Ends an in-flight turn successfully: the SSE watcher reported the
@@ -185,10 +192,10 @@ const make = (config: OrchestratorConfig) =>
       });
 
     /** Arms the inactivity watchdog for the room's in-flight turn. A turn
-     * waiting on an approval is exempt (a human gate waits as long as it
-     * takes — that's the design, and a permission request emits no activity
-     * either); so is a turn that simply hasn't been silent for the full
-     * window yet — in that case the check reschedules itself. */
+     * waiting on an approval or a question is exempt (a human gate waits as
+     * long as it takes — that's the design, and neither kind of ask emits
+     * activity on its own); so is a turn that simply hasn't been silent for
+     * the full window yet — in that case the check reschedules itself. */
     const armWatchdog = (room: Room): void => {
       if (config.turnWatchdogMs <= 0) return;
       const f = inFlight.get(room.roomId);
@@ -196,7 +203,7 @@ const make = (config: OrchestratorConfig) =>
       const check = () => {
         const cur = inFlight.get(room.roomId);
         if (!cur) return;
-        if (pendingApprovals.has(room.roomId)) return armWatchdog(room); // human gate — keep waiting
+        if (pendingApprovals.has(room.roomId) || pendingQuestions.has(room.roomId)) return armWatchdog(room); // human gate — keep waiting
         const silentFor = Date.now() - cur.lastActivityAt;
         if (silentFor < config.turnWatchdogMs) {
           cur.watchdogTimer = setTimeout(check, config.turnWatchdogMs - silentFor + 500);
@@ -258,9 +265,11 @@ const make = (config: OrchestratorConfig) =>
             markActivity();
             if (sessErr.sessionId && sessErr.sessionId !== room.sessionId) return;
             console.warn(`[${room.roomId}] session error:`, sessErr.message);
-            void Effect.runPromise(send(room.roomId, { type: "error", text: `session error: ${sessErr.message}` })).catch(
-              () => {},
-            );
+            // No session.idle follows a session.error for an aborted/errored turn,
+            // so without this the turn would just sit in inFlight until the
+            // watchdog eventually times it out. abort: false — the session has
+            // already ended server-side, nothing left to abort.
+            void Effect.runPromise(failTurn(room, `session error: ${sessErr.message}`, { abort: false })).catch(() => {});
           },
           onCostUpdate: (update) => {
             markActivity();
@@ -312,6 +321,25 @@ const make = (config: OrchestratorConfig) =>
             void Effect.runPromise(finishTurn(room)).catch((err) =>
               console.warn(`[${room.roomId}] finish-turn failed:`, describeError(err)),
             );
+          },
+          onQuestion: (ask) => {
+            markActivity();
+            if (ask.sessionId !== room.sessionId) return;
+            void Effect.runPromise(
+              Effect.gen(function* () {
+                yield* send(room.roomId, { type: "question", description: ask.description });
+                const answers = yield* Effect.async<string[][]>((resume) => {
+                  pendingQuestions.set(room.roomId, { resolve: (a) => resume(Effect.succeed(a)), count: ask.count });
+                });
+                // Pod may have gone away while the answer was pending (stopWatcher
+                // already resolved us with [] and dropped the watcher) — don't POST
+                // a reply to a dead pod.
+                if (!permissionWatchers.has(room.roomId)) return;
+                yield* workspace.answerQuestion(baseUrl, password, ask.sessionId, ask.requestId, answers).pipe(
+                  Effect.catchAll((failure) => send(room.roomId, errorEvent(failure, "failed to record answer"))),
+                );
+              }),
+            ).catch((err) => console.warn(`[${room.roomId}] question flow failed:`, describeError(err)));
           },
           onError: (err) => console.warn(`[${room.roomId}] permission watcher error:`, describeError(err)),
         });
@@ -625,6 +653,25 @@ const make = (config: OrchestratorConfig) =>
           // model is sent per-message (src/opencode.ts), never baked into the pod,
           // so this takes effect on the very next message — no restart needed.
           yield* send(roomId, { type: "info", text: `Model set to ${arg}. Takes effect on your next message.` });
+          return;
+        }
+
+        // If this room is waiting on a question, this message IS the answer(s) —
+        // one line per question when there's more than one, otherwise the whole
+        // reply is the (single) answer. Checked before pendingApprovals: a room
+        // only ever has one human gate open at a time, but the check is cheap
+        // either way.
+        const pendingQuestion = pendingQuestions.get(roomId);
+        if (pendingQuestion) {
+          pendingQuestions.delete(roomId);
+          const lines = body.split("\n").map((l) => l.trim()).filter(Boolean);
+          const answers: string[][] =
+            pendingQuestion.count > 1
+              ? Array.from({ length: pendingQuestion.count }, (_, i) => [lines[i] ?? body])
+              : [[body]];
+          const turn = inFlight.get(roomId);
+          if (turn) turn.lastActivityAt = Date.now();
+          pendingQuestion.resolve(answers);
           return;
         }
 

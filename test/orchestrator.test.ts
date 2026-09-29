@@ -18,6 +18,7 @@ const calls = {
   createSession: [] as string[],
   teardown: [] as string[],
   respond: [] as boolean[],
+  questionAnswers: [] as string[][][],
   sent: [] as string[],
   aborted: 0,
   redacted: 0,
@@ -111,6 +112,10 @@ const fakeWorkspace: WorkspaceService = {
     Effect.sync(() => {
       calls.respond.push(approved);
     }),
+  answerQuestion: (_b, _p, _s, _rid, answers) =>
+    Effect.sync(() => {
+      calls.questionAnswers.push(answers);
+    }),
   watch: (_b, _p, handlers) =>
     Effect.sync(() => {
       watchHandlers = handlers;
@@ -181,6 +186,7 @@ const reset = () => {
   calls.createSession.length = 0;
   calls.teardown.length = 0;
   calls.respond.length = 0;
+  calls.questionAnswers.length = 0;
   calls.sent.length = 0;
   calls.aborted = 0;
   calls.redacted = 0;
@@ -300,6 +306,52 @@ test("'no' denies and is relayed as deny", async () => {
   assert.deepEqual(calls.respond, [false]);
 });
 
+test("a single question is answered with the whole reply, and the turn isn't left hanging", async () => {
+  reset();
+  await onboard("!t4b");
+  await run({ conversationId: "!t4b", text: "build the feature" });
+  watchHandlers!.onQuestion({ sessionId: "ses1", requestId: "q1", description: "Which env, staging or prod?", count: 1 });
+  await until(() => recorded.some((r) => r.event.type === "question"));
+
+  await run({ conversationId: "!t4b", text: "staging" });
+  assert.deepEqual(calls.questionAnswers, [[["staging"]]]);
+  // Answering releases the room instead of leaving the turn to hang until the
+  // watchdog eventually times it out — the whole point of this feature.
+  watchHandlers!.onIdle("ses1");
+  await until(() => recorded.some((r) => r.event.type === "result"));
+  await run({ conversationId: "!t4b", text: "next task" });
+  assert.deepEqual(calls.sent, ["build the feature", "next task"]);
+});
+
+test("a multi-question ask maps one reply line to each question, in order", async () => {
+  reset();
+  await onboard("!t4c");
+  await run({ conversationId: "!t4c", text: "build the feature" });
+  watchHandlers!.onQuestion({
+    sessionId: "ses1",
+    requestId: "q2",
+    description: "1. Which env?\n2. Which branch?",
+    count: 2,
+  });
+  await until(() => recorded.some((r) => r.event.type === "question"));
+
+  await run({ conversationId: "!t4c", text: "staging\nmain" });
+  assert.deepEqual(calls.questionAnswers, [[["staging"], ["main"]]]);
+  watchHandlers!.onIdle("ses1");
+  await until(() => recorded.some((r) => r.event.type === "result"));
+});
+
+test("/stop works while a question is pending and resolves it without POSTing", async () => {
+  reset();
+  await onboard("!t4d");
+  watchHandlers!.onQuestion({ sessionId: "ses1", requestId: "q3", description: "Which env?", count: 1 });
+  await until(() => recorded.some((r) => r.event.type === "question"));
+
+  await run({ conversationId: "!t4d", text: "/stop" });
+  assert.equal(calls.teardown.length, 1);
+  assert.equal(calls.questionAnswers.length, 0); // answered ([]) locally, never POSTed to the dead pod
+});
+
 test("/stop works while an approval is pending and resolves it without POSTing", async () => {
   reset();
   await onboard("!t5");
@@ -415,6 +467,20 @@ test("watchdog aborts a turn that goes silent and releases the room", async () =
   await runW({ conversationId: "!g1", text: "retry" });
   assert.deepEqual(calls.sent, ["long task", "retry"]); // room released
   // Finish the retry turn — don't leak its watchdog into later tests.
+  watchHandlers!.onIdle("ses1");
+  await until(() => recorded.some((r) => r.event.type === "result"));
+});
+
+test("session error on the room's session ends the turn immediately, not after the watchdog", async () => {
+  reset();
+  const runW = await guardrailOrchestrator({ turnWatchdogMs: 60_000 }); // long enough that only the fix ends the turn early
+  await onboard("!g1b", runW);
+  await runW({ conversationId: "!g1b", text: "long task" });
+  watchHandlers!.onSessionError({ sessionId: "ses1", message: "Aborted" });
+  await until(() => recorded.some((r) => r.event.type === "error" && r.event.text.includes("Aborted")));
+  assert.equal(calls.aborted, 0); // already ended server-side — nothing to abort
+  await runW({ conversationId: "!g1b", text: "retry" }); // room released, not stuck busy
+  assert.deepEqual(calls.sent, ["long task", "retry"]);
   watchHandlers!.onIdle("ses1");
   await until(() => recorded.some((r) => r.event.type === "result"));
 });
