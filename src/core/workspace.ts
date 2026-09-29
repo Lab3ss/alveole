@@ -165,7 +165,15 @@ const makeWorkspace = (config: { openrouterKey: string }): WorkspaceService => (
 
   createSession: (baseUrl, password) =>
     failing("session-create-failed", () =>
-      retryUntilReady(() => opencode.createSession(baseUrl, password, AbortSignal.timeout(10_000))),
+      // 90 × 2s ≈ 3 min: the container is "Running" while entrypoint.sh is
+      // still cloning the repo — serve only exec's AFTER the clone, and a
+      // slow one easily outlives the previous 10×2s budget, surfacing as
+      // session-create-failed/ECONNREFUSED on a pod that was fine.
+      retryUntilReady(
+        () => opencode.createSession(baseUrl, password, AbortSignal.timeout(10_000)),
+        90,
+        2000,
+      ),
     ),
   probe: (baseUrl, password) => failing("probe-failed", () => retryUntilReady(() => opencode.probeConnection(baseUrl, password))),
   sendPrompt: (baseUrl, password, sessionId, text, model, onDone) =>

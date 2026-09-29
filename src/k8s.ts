@@ -96,7 +96,7 @@ export async function provisionRoom(name: string, env: RoomEnv, agentRules?: str
   );
   const serverPassword = await getRoomServerPassword(name);
 
-  await ignoringConflict(() =>
+  const createRoomPod = () =>
     coreApi().createNamespacedPod({
       namespace: ROOMS_NS,
       body: {
@@ -119,8 +119,24 @@ export async function provisionRoom(name: string, env: RoomEnv, agentRules?: str
           ],
         },
       },
-    }),
-  );
+    });
+  await ignoringConflict(createRoomPod);
+  // Pod deletion is asynchronous (see podTerminating): the /stop → next-message
+  // flow tears down and re-provisions the SAME deterministic name, and the
+  // create above 409s while the old object is still Terminating — swallowed by
+  // design (idempotency). Adopting that dying pod would look fine until
+  // createSession burned its whole retry budget against a Service whose
+  // endpoints no longer include it (ECONNREFUSED). So: if the pod we collided
+  // with is terminating, wait for the object to actually disappear, then
+  // create the fresh one for real.
+  if (await podTerminating(name)) {
+    const deadline = Date.now() + 90_000;
+    do {
+      if (Date.now() >= deadline) throw new Error(`room pod ${name} never finished terminating`);
+      await new Promise((r) => setTimeout(r, 2000));
+    } while (await podTerminating(name));
+    await createRoomPod();
+  }
 
   await ignoringConflict(() =>
     coreApi().createNamespacedService({
@@ -154,6 +170,22 @@ export async function teardownRoom(name: string): Promise<void> {
   await ignoring404(() => coreApi().deleteNamespacedSecret({ name, namespace: ROOMS_NS }));
 }
 
+/**
+ * Pod deletion is asynchronous: the object lingers in Terminating
+ * (deletionTimestamp set) until the kubelet finishes the graceful kill —
+ * meanwhile a same-name create 409s, the Service's endpoints already exclude
+ * it, and it can never serve traffic again. Callers must not adopt one.
+ */
+async function podTerminating(name: string): Promise<boolean> {
+  try {
+    const pod = await coreApi().readNamespacedPod({ name, namespace: ROOMS_NS });
+    return Boolean(pod.metadata?.deletionTimestamp);
+  } catch (err: any) {
+    if (err?.code === 404) return false;
+    throw err;
+  }
+}
+
 export type RoomPodState = "running" | "pending" | "gone" | "failed";
 
 /**
@@ -166,6 +198,11 @@ export type RoomPodState = "running" | "pending" | "gone" | "failed";
 export async function readRoomPodState(name: string): Promise<RoomPodState> {
   try {
     const pod = await coreApi().readNamespacedPod({ name, namespace: ROOMS_NS });
+    // Terminating (e.g. a /stop delete still draining): not adoptable — the
+    // Service has already dropped it from endpoints and it will disappear on
+    // its own. "gone" sends ensureProvisioned down the re-provision path,
+    // which waits out the terminating object before creating the fresh pod.
+    if (pod.metadata?.deletionTimestamp) return "gone";
     if (pod.status?.phase === "Failed" || pod.status?.phase === "Succeeded") return "failed";
     if (pod.status?.containerStatuses?.some((c) => c.state?.running)) return "running";
     return "pending";
@@ -194,7 +231,7 @@ const FATAL_WAIT_REASONS = new Set([
  * its .status field is included on read; only *writing* status needs the
  * separate pods/status subresource permission, which the broker doesn't need.
  */
-export async function waitForRunning(name: string, timeoutMs = 60_000): Promise<void> {
+export async function waitForRunning(name: string, timeoutMs = 120_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const pod = await coreApi().readNamespacedPod({ name, namespace: ROOMS_NS });
