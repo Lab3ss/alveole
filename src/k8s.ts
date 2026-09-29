@@ -194,7 +194,7 @@ const FATAL_WAIT_REASONS = new Set([
  * its .status field is included on read; only *writing* status needs the
  * separate pods/status subresource permission, which the broker doesn't need.
  */
-export async function waitForRunning(name: string, timeoutMs = 60_000): Promise<void> {
+export async function waitForRunning(name: string, timeoutMs = 120_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const pod = await coreApi().readNamespacedPod({ name, namespace: ROOMS_NS });

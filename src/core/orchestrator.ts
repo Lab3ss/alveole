@@ -357,6 +357,18 @@ const make = (config: OrchestratorConfig) =>
             if (!serverPasswords.has(room.roomId)) {
               serverPasswords.set(room.roomId, yield* workspace.serverPassword(room.podName));
             }
+            // A live pod with NO recorded sessionId is a half-finished
+            // provision (createSession failed/never ran — e.g. the server
+            // wasn't listening yet within the old retry budget). Without
+            // this, every later message fires the prompt at
+            // /session/undefined and the room is stuck forever.
+            if (!room.sessionId) {
+              room.sessionId = yield* workspace.createSession(
+                workspace.serverUrl(room.podName),
+                serverPasswords.get(room.roomId)!,
+              );
+              registry.save(room);
+            }
             yield* startWatcher(room);
             return;
           }

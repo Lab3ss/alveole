@@ -15,6 +15,7 @@ const recorded: Array<{ conversationId: string; event: OutboundEvent }> = [];
 const rooms = new Map<string, Room>();
 const calls = {
   provision: [] as Array<{ name: string; rules?: string }>,
+  createSession: [] as string[],
   teardown: [] as string[],
   respond: [] as boolean[],
   sent: [] as string[],
@@ -80,7 +81,11 @@ const fakeWorkspace: WorkspaceService = {
       calls.teardown.push(name);
     }),
   serverPassword: () => Effect.succeed("server-password"),
-  createSession: () => Effect.succeed("ses1"),
+  createSession: (baseUrl) =>
+    Effect.sync(() => {
+      calls.createSession.push(baseUrl);
+      return "ses1";
+    }),
   probe: () => Effect.void,
   sendPrompt: (_b, _p, _s, text, _model, onDone) =>
     Effect.sync(() => {
@@ -173,6 +178,7 @@ const reset = () => {
   recorded.length = 0;
   rooms.clear();
   calls.provision.length = 0;
+  calls.createSession.length = 0;
   calls.teardown.length = 0;
   calls.respond.length = 0;
   calls.sent.length = 0;
@@ -236,6 +242,24 @@ test("steady-state task: prompt fired, room busy, SSE idle relays the result and
   assert.equal(result.event.type === "result" && result.event.text, "did the thing: fix the login bug");
   await run({ conversationId: "!t2", text: "one more" });
   assert.deepEqual(calls.sent, ["fix the login bug", "one more"]);
+});
+
+test("a live pod with a lost sessionId (half-finished provision) re-creates the session instead of prompting at /session/undefined", async () => {
+  reset();
+  await onboard("!t2c");
+  const before = calls.createSession.length;
+  // Simulate the createSession-failed-mid-provision state: pod alive in the
+  // registry, but no sessionId was ever recorded (e.g. the server wasn't
+  // listening within the retry budget when the pod was first provisioned).
+  rooms.get("!t2c")!.sessionId = undefined;
+  await run({ conversationId: "!t2c", text: "fix the login bug" });
+  assert.equal(calls.createSession.length, before + 1);
+  assert.ok(calls.createSession.at(-1)!.includes("room-test-t2c"));
+  assert.equal(rooms.get("!t2c")?.sessionId, "ses1");
+  assert.deepEqual(calls.sent, ["fix the login bug"]);
+  assert.ok(!recorded.some((r) => r.event.type === "error"));
+  watchHandlers!.onIdle("ses1");
+  await until(() => recorded.some((r) => r.event.type === "result"));
 });
 
 test("POST resolution is a redundant completion signal when the SSE idle event is missed", async () => {
