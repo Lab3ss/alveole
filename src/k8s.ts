@@ -10,7 +10,9 @@ import * as k8s from "@kubernetes/client-node";
 
 const ROOMS_NS = process.env.ROOMS_NAMESPACE ?? "coding-agent-rooms";
 const RUNNER_IMAGE = process.env.RUNNER_IMAGE ?? "ghcr.io/lab3ss/coding-agent-runner:0.3.0";
-const OPENCODE_PORT = 4096;
+// Shared with the compose driver (src/docker.ts): the runner's opencode
+// server listens on this port in both backends.
+export const OPENCODE_PORT = 4096;
 
 // Created lazily on first API use rather than at import time: loadFromDefault
 // touches the filesystem/env and throws when no config source exists, which

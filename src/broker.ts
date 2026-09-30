@@ -15,16 +15,39 @@
  * room's pod at provision time — never stored per-room in Git).
  */
 import { Effect, Layer, ManagedRuntime } from "effect";
+import { readFile } from "node:fs/promises";
 import { MatrixAdapterLive } from "./adapter/matrix.ts";
 import { Orchestrator, OrchestratorLive } from "./core/orchestrator.ts";
 import { RegistryLive } from "./core/registry-service.ts";
 import { WorkspaceLive } from "./core/workspace.ts";
 
-const homeserver = process.env.MATRIX_HOMESERVER!;
-const matrixToken = process.env.MATRIX_TOKEN!;
+let homeserver = process.env.MATRIX_HOMESERVER!;
+let matrixToken = process.env.MATRIX_TOKEN!;
 const openrouterKey = process.env.OPENROUTER_API_KEY!;
 
-if (!homeserver || !matrixToken) throw new Error("MATRIX_HOMESERVER and MATRIX_TOKEN required");
+// External-Matrix deployments provide MATRIX_HOMESERVER/MATRIX_TOKEN directly.
+// In compose mode the bundled homeserver's bootstrap (deploy/bootstrap) creates
+// the bot account instead and writes its credentials to /data/bot-account.json
+// — the broker picks them up here, waiting up to 120s (2s retries) since it
+// deliberately has no depends_on on the bootstrap (see deploy/docker-compose.yml).
+if (!homeserver || !matrixToken) {
+  const deadline = Date.now() + (process.env.WORKSPACE_BACKEND === "compose" ? 120_000 : 0);
+  if (deadline) console.log("[coding-agent] MATRIX_TOKEN absent — waiting for /data/bot-account.json (bundled bootstrap)…");
+  do {
+    try {
+      const acct = JSON.parse(await readFile("/data/bot-account.json", "utf8")) as { homeserverUrl?: string; botAccessToken?: string };
+      homeserver = homeserver || acct.homeserverUrl || "";
+      matrixToken = matrixToken || acct.botAccessToken || "";
+      if (homeserver && matrixToken) break;
+    } catch {
+      // not written yet (bootstrap still running) or a partial write
+    }
+    if (Date.now() >= deadline) break;
+    await new Promise((r) => setTimeout(r, 2000));
+  } while (true);
+}
+
+if (!homeserver || !matrixToken) throw new Error("MATRIX_HOMESERVER and MATRIX_TOKEN required (compose mode reads them from /data/bot-account.json, written by deploy/bootstrap)");
 if (!openrouterKey) throw new Error("OPENROUTER_API_KEY required");
 
 const orchestratorConfig = {

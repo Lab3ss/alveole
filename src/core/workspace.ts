@@ -16,6 +16,7 @@
  * room's Secret at provision time.
  */
 import { Context, Effect, Layer } from "effect";
+import * as docker from "../docker.ts";
 import * as k8s from "../k8s.ts";
 import * as opencode from "../opencode.ts";
 import { describeError } from "../util.ts";
@@ -159,20 +160,15 @@ const failing = <A, E extends WorkspaceError>(code: E, run: () => Promise<A>): E
     },
   });
 
-const makeWorkspace = (config: { openrouterKey: string }): WorkspaceService => ({
-  resourceName: k8s.roomResourceName,
-  serverUrl: k8s.roomServerUrl,
-
-  provision: (name, project, agentRules) =>
-    failing("provision-failed", () =>
-      k8s.provisionRoom(name, { repo: project.repo, token: project.token, openrouterKey: config.openrouterKey }, agentRules),
-    ),
-  waitForRunning: (name) => failing("pod-wait-failed", () => k8s.waitForRunning(name)),
-  readPodState: (name) => failing("pod-read-failed", () => k8s.readRoomPodState(name)),
-  teardown: (name) => failing("teardown-failed", () => k8s.teardownRoom(name)),
-  serverPassword: (name) => failing("secret-read-failed", () => k8s.getRoomServerPassword(name)),
-
-  createSession: (baseUrl, password) =>
+/**
+ * The HTTP-only methods shared by both drivers: createSession/probe/sendPrompt/
+ * watch/... only ever speak to the room's opencode server over HTTP, so they
+ * are byte-for-byte identical whether the room is a k8s pod or a compose
+ * container. Only the infra half (resource naming, provision, waits, state,
+ * teardown, password) is driver-specific.
+ */
+const httpMethods = () => ({
+  createSession: (baseUrl: string, password: string) =>
     failing("session-create-failed", () =>
       // 90 × 2s ≈ 3 min: the container is "Running" while entrypoint.sh is
       // still cloning the repo — serve only exec's AFTER the clone, and a
@@ -184,21 +180,21 @@ const makeWorkspace = (config: { openrouterKey: string }): WorkspaceService => (
         2000,
       ),
     ),
-  probe: (baseUrl, password) => failing("probe-failed", () => retryUntilReady(() => opencode.probeConnection(baseUrl, password))),
-  sendPrompt: (baseUrl, password, sessionId, text, model, onDone) =>
+  probe: (baseUrl: string, password: string) => failing("probe-failed", () => retryUntilReady(() => opencode.probeConnection(baseUrl, password))),
+  sendPrompt: (baseUrl: string, password: string, sessionId: string, text: string, model: string | undefined, onDone: (err: string | undefined) => void) =>
     Effect.sync(() => opencode.sendPrompt(baseUrl, password, sessionId, text, model, onDone)),
-  turnResult: (baseUrl, password, sessionId) =>
+  turnResult: (baseUrl: string, password: string, sessionId: string) =>
     Effect.map(
       failing("messages-fetch-failed", () => opencode.getMessages(baseUrl, password, sessionId)),
       (messages) => opencode.extractTurnResult(messages),
     ),
-  abort: (baseUrl, password, sessionId) => failing("session-abort-failed", () => opencode.abortSession(baseUrl, password, sessionId)),
-  usage: (baseUrl, password, sessionId) => failing("usage-fetch-failed", () => opencode.getSessionUsage(baseUrl, password, sessionId)),
-  respondPermission: (baseUrl, password, sessionId, permissionId, approved) =>
+  abort: (baseUrl: string, password: string, sessionId: string) => failing("session-abort-failed", () => opencode.abortSession(baseUrl, password, sessionId)),
+  usage: (baseUrl: string, password: string, sessionId: string) => failing("usage-fetch-failed", () => opencode.getSessionUsage(baseUrl, password, sessionId)),
+  respondPermission: (baseUrl: string, password: string, sessionId: string, permissionId: string, approved: boolean) =>
     failing("permission-respond-failed", () => opencode.respondPermission(baseUrl, password, sessionId, permissionId, approved)),
-  answerQuestion: (baseUrl, password, sessionId, requestId, answers) =>
+  answerQuestion: (baseUrl: string, password: string, sessionId: string, requestId: string, answers: string[][]) =>
     failing("question-respond-failed", () => opencode.answerQuestion(baseUrl, password, sessionId, requestId, answers)),
-  watch: (baseUrl, password, handlers) =>
+  watch: (baseUrl: string, password: string, handlers: WatchHandlers) =>
     failing("watch-failed", () =>
       opencode.watchPermissions(
         baseUrl,
@@ -215,5 +211,83 @@ const makeWorkspace = (config: { openrouterKey: string }): WorkspaceService => (
     ),
 });
 
-export const WorkspaceLive = (config: { openrouterKey: string }) =>
-  Layer.effect(Workspace, Effect.sync(() => makeWorkspace(config)));
+const makeK8sWorkspace = (config: { openrouterKey: string }): WorkspaceService => ({
+  ...httpMethods(),
+  resourceName: k8s.roomResourceName,
+  serverUrl: k8s.roomServerUrl,
+
+  provision: (name, project, agentRules) =>
+    failing("provision-failed", () =>
+      k8s.provisionRoom(name, { repo: project.repo, token: project.token, openrouterKey: config.openrouterKey }, agentRules),
+    ),
+  waitForRunning: (name) => failing("pod-wait-failed", () => k8s.waitForRunning(name)),
+  readPodState: (name) => failing("pod-read-failed", () => k8s.readRoomPodState(name)),
+  teardown: (name) => failing("teardown-failed", () => k8s.teardownRoom(name)),
+  serverPassword: (name) => failing("secret-read-failed", () => k8s.getRoomServerPassword(name)),
+});
+
+/**
+ * Compose driver (WORKSPACE_BACKEND=compose): same WorkspaceService contract,
+ * src/docker.ts underneath. Lifecycle semantics (idle sweep, watchdogs,
+ * self-heal, re-provisioning) are the orchestrator's and are untouched — the
+ * only difference is which infrastructure the infra half talks to.
+ *
+ * Broker-restart reconciliation is lazy (see src/docker.ts's header for the
+ * full rationale): after a broker restart, live room containers keep running
+ * but the broker has lost its membership in their per-room networks, so every
+ * HTTP call would ECONNREFUSED until it re-attaches. Rather than an intrusive
+ * startup sweep through the orchestrator, the re-attach happens lazily:
+ *  - provisionRoom re-runs the attach every time (idempotent);
+ *  - serverPassword — the FIRST workspace call on every recovery path
+ *    (ensureProvisioned's already-running branch, /usage, /stop) — best-effort
+ *    re-attaches before reading the env file, so the watch/session recovery
+ *    below it finds the network healthy;
+ *  - createSession additionally re-attaches once on a connection-refused-type
+ *    failure as belt-and-suspenders for anything the first two missed.
+ */
+const makeComposeWorkspace = (config: { openrouterKey: string }): WorkspaceService => {
+  /** Room resource name a room's baseUrl points at (docker DNS name = container name). */
+  const roomNameFromUrl = (baseUrl: string): string => new URL(baseUrl).hostname;
+  /** Connection-establishment failures — the room container may be perfectly
+   * healthy and the broker just not (yet) attached to its network. */
+  const isConnectionError = (err: unknown): boolean =>
+    /(ECONNREFUSED|ENOTFOUND|EAI_AGAIN|UND_ERR_CONNECT_TIMEOUT)/.test(describeError(err));
+
+  return {
+    ...httpMethods(),
+    resourceName: docker.roomResourceName,
+    serverUrl: docker.roomServerUrl,
+
+    provision: (name, project, agentRules) =>
+      failing("provision-failed", () =>
+        docker.provisionRoom(name, { repo: project.repo, token: project.token, openrouterKey: config.openrouterKey }, agentRules),
+      ),
+    waitForRunning: (name) => failing("pod-wait-failed", () => docker.waitForRunning(name)),
+    readPodState: (name) => failing("pod-read-failed", () => docker.readRoomPodState(name)),
+    teardown: (name) => failing("teardown-failed", () => docker.teardownRoom(name)),
+    serverPassword: (name) =>
+      failing("secret-read-failed", async () => {
+        await docker.ensureBrokerConnected(name); // lazy reconciliation — never fails the read
+        return docker.getRoomServerPassword(name);
+      }),
+    // Identical to the shared one, except a connection-refused-shaped failure
+    // gets one lazy re-attach + a second retry budget before surfacing.
+    createSession: (baseUrl, password) =>
+      failing("session-create-failed", async () => {
+        try {
+          return await retryUntilReady(() => opencode.createSession(baseUrl, password, AbortSignal.timeout(10_000)), 90, 2000);
+        } catch (err) {
+          if (!isConnectionError(err)) throw err;
+          console.warn(`[workspace] createSession to ${baseUrl} failed on a connection error — re-attaching broker to the room network and retrying`);
+          await docker.ensureBrokerConnected(roomNameFromUrl(baseUrl));
+          return await retryUntilReady(() => opencode.createSession(baseUrl, password, AbortSignal.timeout(10_000)), 90, 2000);
+        }
+      }),
+  };
+};
+
+export const WorkspaceLive = (config: { openrouterKey: string }) => {
+  const backend = process.env.WORKSPACE_BACKEND ?? "k8s";
+  const make = backend === "compose" ? makeComposeWorkspace : makeK8sWorkspace;
+  return Layer.effect(Workspace, Effect.sync(() => make(config)));
+};

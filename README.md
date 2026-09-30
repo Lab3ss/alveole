@@ -76,7 +76,56 @@ Commands:
   remembered, so the next message re-provisions without re-asking — but
   starts a **fresh** session (no conversation memory survives a teardown).
 
-## Deploying your own
+## Démarrage docker-compose (5 minutes)
+
+One machine, one command — a bundled Matrix homeserver
+([continuwuity](https://continuwuity.org), conduwuit's maintained successor),
+[Element Web](https://element.io), and the broker, with per-room runners as
+plain Docker containers (`WORKSPACE_BACKEND=compose`, see `src/docker.ts`).
+The k8s deployment below is unchanged and remains the default in code.
+
+1. Requirements: Docker with the compose plugin, and ports 8080 free.
+2. `cp .env.example .env`, then set in `.env`:
+   - `OPENROUTER_API_KEY` — your [OpenRouter](https://openrouter.ai) key;
+   - `REGISTRATION_TOKEN` — generate one: `openssl rand -hex 12` (the bundled
+     homeserver only accepts token registrations; the bootstrap uses it to
+     create your account and the bot's);
+   - to chat from a phone or another machine: `HOMESERVER_PUBLIC_URL=http://<server-LAN-ip>:8008`
+     and `MATRIX_SERVER_NAME=<server-LAN-ip>` (leave both at their defaults to
+     use it on the host only).
+3. Build the runner image once (it runs your repos, so it's built locally):
+
+   ```sh
+   docker compose --profile build -f deploy/docker-compose.yml --env-file .env build runner-image
+   ```
+
+4. Start everything:
+
+   ```sh
+   docker compose -f deploy/docker-compose.yml --env-file .env up -d
+   ```
+
+5. `docker compose -f deploy/docker-compose.yml logs bootstrap` prints the
+   credentials block: open Element Web (port 8080 of the server), sign in with
+   the printed username/password, and say hi in the room. The bot asks for a
+   repo, a GitHub PAT scoped to it, and a model — then it works exactly as in
+   any other room.
+
+Notes:
+
+- `docker compose down` stops broker/homeserver/Element but leaves live room
+  runners alone (they're runtime containers, not compose services); the
+  broker re-attaches to their networks lazily on its next message.
+- `COMPOSE_PROFILES=""` (with `MATRIX_HOMESERVER` + `MATRIX_TOKEN` in `.env`)
+  starts the broker alone against the Matrix homeserver of your choice — the
+  bootstrap and bundled homeserver don't exist in that mode.
+- **Security**: mounting `/var/run/docker.sock` into the broker gives it
+  root-equivalent power on the host — that's how it starts room containers.
+  Run rootless Docker or Podman for a hardened setup, and keep the default
+  binds (only Element's 8080 is published; 8008 stays on loopback, so the
+  homeserver's token-gated registration is never reachable from outside).
+
+## Deploying your own (k8s)
 
 Requirements: a Kubernetes cluster (runs on K3s), Node 22+ if building the
 broker image yourself, a Matrix account for the bot, an
@@ -97,6 +146,7 @@ via `envFrom` works well):
 |-----|---------|
 | `MATRIX_HOMESERVER`, `MATRIX_TOKEN` | the bot's Matrix account |
 | `OPENROUTER_API_KEY` | the only LLM credential, copied into every room's pod |
+| `WORKSPACE_BACKEND` | `k8s` (default) or `compose` — which infra driver provisions per-room workspaces |
 | `ROOMS_NAMESPACE` | where per-room pods live; default `coding-agent-rooms` |
 | `RUNNER_IMAGE` | runner image tag; default `ghcr.io/lab3ss/coding-agent-runner:0.3.0` |
 | `IDLE_TEARDOWN_HOURS` | idle threshold before auto-teardown; default `24` |
