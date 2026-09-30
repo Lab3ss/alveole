@@ -36,6 +36,14 @@ if (!homeserver || !matrixToken) {
   do {
     try {
       const acct = JSON.parse(await readFile("/data/bot-account.json", "utf8")) as { homeserverUrl?: string; botAccessToken?: string };
+      // The bootstrap writes a coherent pair — take both or neither. Mixing a
+      // half-set env var with the file sends the local bot's token to a
+      // foreign homeserver (M_MISSING_TOKEN at startup).
+      if (acct.homeserverUrl && acct.botAccessToken) {
+        homeserver = acct.homeserverUrl;
+        matrixToken = acct.botAccessToken;
+        break;
+      }
       homeserver = homeserver || acct.homeserverUrl || "";
       matrixToken = matrixToken || acct.botAccessToken || "";
       if (homeserver && matrixToken) break;
@@ -47,7 +55,12 @@ if (!homeserver || !matrixToken) {
   } while (true);
 }
 
-if (!homeserver || !matrixToken) throw new Error("MATRIX_HOMESERVER and MATRIX_TOKEN required (compose mode reads them from /data/bot-account.json, written by deploy/bootstrap)");
+if (!homeserver || !matrixToken) {
+  if (process.env.WORKSPACE_BACKEND === "compose") {
+    throw new Error("no usable /data/bot-account.json within 120s — the bootstrap didn't produce the bot's credentials; check `docker compose logs bootstrap` and the homeserver container's logs");
+  }
+  throw new Error("MATRIX_HOMESERVER and MATRIX_TOKEN required (compose mode reads them from /data/bot-account.json, written by deploy/bootstrap)");
+}
 if (!openrouterKey) throw new Error("OPENROUTER_API_KEY required");
 
 const orchestratorConfig = {

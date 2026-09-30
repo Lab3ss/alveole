@@ -51,6 +51,13 @@ if (existsSync(ACCOUNT_FILE)) {
   process.exit(0);
 }
 
+// Fail fast: the bundled homeserver treats an empty CONTINUWUITY_REGISTRATION_TOKEN
+// as "directive specified but empty" and refuses to start, so every downstream
+// wait would burn its full timeout before failing with an unrelated message.
+if (!REGISTRATION_TOKEN) {
+  fail(`REGISTRATION_TOKEN is empty — the bundled homeserver refuses to start without it. Set it in .env (generate one: openssl rand -hex 12), then recreate the stack (docker compose up -d)`);
+}
+
 const api = async (method, path, body, token) => {
   const res = await fetch(HOMESERVER_URL + "/_matrix/client" + path, {
     method,
