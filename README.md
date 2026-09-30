@@ -1,9 +1,8 @@
 # Alvéole
 
-Your coding agent lives in your messenger — and in an isolated filesystem,
-on your own infrastructure. Every room is a sealed, disposable workspace:
-your tokens live and die inside it, nothing runs without your approval, and
-no vendor ever holds your keys.
+Your coding agent lives in an isolated, ephemeral filesystem — one for each
+of your projects. Self-host the open-source stack, then work and collaborate
+from anywhere, in any Matrix client.
 
 ## Motivation
 
