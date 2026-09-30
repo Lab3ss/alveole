@@ -19,7 +19,7 @@ export interface RegistryService {
   readonly delete: (conversationId: string) => void;
 }
 
-export class Registry extends Context.Tag("coding-agent/Registry")<Registry, RegistryService>() {}
+export class Registry extends Context.Tag("alveole/Registry")<Registry, RegistryService>() {}
 
 export const RegistryLive = Layer.sync(Registry, () => ({
   get: getRoom,

@@ -136,7 +136,7 @@ const makeMatrixAdapter = (config: MatrixAdapterConfig): Effect.Effect<ChatAdapt
       },
     });
     const startedAt = Date.now();
-    console.log(`[coding-agent] matrix adapter up as ${me} on ${config.homeserver}`);
+    console.log(`[alveole] matrix adapter up as ${me} on ${config.homeserver}`);
 
     const seenEventIds = new Set<string>();
 

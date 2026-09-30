@@ -57,7 +57,7 @@ export interface OrchestratorService {
   readonly start: Effect.Effect<void, "chat-start-failed">;
 }
 
-export class Orchestrator extends Context.Tag("coding-agent/Orchestrator")<Orchestrator, OrchestratorService>() {}
+export class Orchestrator extends Context.Tag("alveole/Orchestrator")<Orchestrator, OrchestratorService>() {}
 
 const make = (config: OrchestratorConfig) =>
   Effect.gen(function* () {

@@ -32,7 +32,7 @@ const openrouterKey = process.env.OPENROUTER_API_KEY!;
 // deliberately has no depends_on on the bootstrap (see deploy/docker-compose.yml).
 if (!homeserver || !matrixToken) {
   const deadline = Date.now() + (process.env.WORKSPACE_BACKEND === "compose" ? 120_000 : 0);
-  if (deadline) console.log("[coding-agent] MATRIX_TOKEN absent — waiting for /data/bot-account.json (bundled bootstrap)…");
+  if (deadline) console.log("[alveole] MATRIX_TOKEN absent — waiting for /data/bot-account.json (bundled bootstrap)…");
   do {
     try {
       const acct = JSON.parse(await readFile("/data/bot-account.json", "utf8")) as { homeserverUrl?: string; botAccessToken?: string };
@@ -78,8 +78,8 @@ await runtime.runPromise(
     yield* orchestrator.start; // hooks the adapter's inbound stream + idle sweep
   }),
 ).catch((code: "chat-start-failed") => {
-  console.error(`[coding-agent] startup failed: ${code} (details above)`);
+  console.error(`[alveole] startup failed: ${code} (details above)`);
   process.exit(1);
 });
 
-console.log("[coding-agent] listening. Invite me to a room to onboard a project.");
+console.log("[alveole] listening. Invite me to a room to onboard a project.");

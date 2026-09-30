@@ -1,9 +1,9 @@
 {
-  "name": "coding-agent",
+  "name": "alveole",
   "version": "0.2.0",
   "private": true,
   "type": "module",
-  "description": "Chat-driven autonomous coding agent over Matrix — provisions an isolated opencode-backed pod per room.",
+  "description": "Alvéole — chat-driven autonomous coding agent over Matrix: one room = one project, an isolated opencode-backed workspace per room.",
   "main": "src/broker.ts",
   "engines": {
     "node": ">=22.18"

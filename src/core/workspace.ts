@@ -123,7 +123,7 @@ export interface WorkspaceService {
   ) => Effect.Effect<() => void, Failure<"watch-failed">>;
 }
 
-export class Workspace extends Context.Tag("coding-agent/Workspace")<Workspace, WorkspaceService>() {}
+export class Workspace extends Context.Tag("alveole/Workspace")<Workspace, WorkspaceService>() {}
 
 /**
  * The container is Running before opencode's HTTP server inside it is actually listening.
