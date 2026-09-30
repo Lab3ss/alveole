@@ -1,90 +1,39 @@
-# coding-agent
+# Alvéole
 
 Drive [opencode](https://opencode.ai) from your chat app. Send a task in
 natural language to a Matrix room — the agent codes, commits, and opens a PR;
 you review from GitHub mobile. **One room = one project.**
 
-## Why
+## Motivation
 
-- **Code from your phone** — the interface is your messenger, not an IDE.
-  `/connect` even lets you hand a session over to opencode's local TUI on a
-  laptop, and back.
-- **Ephemeral by design** — each room gets its own isolated, non-root pod,
-  torn down after 24h idle. No stateful agent to operate.
-- **Compartmentalized security** — the GitHub PAT lives only in its own pod's
-  Secret and is deleted on teardown; the broker can reach no repo itself. An
-  approval gate stands before `git push` and shell commands.
-- **Sovereignty** — any OpenRouter model, switchable mid-session
-  (`/model`), usage tracking (`/usage`), self-hosted on your own cluster.
-  No closed SaaS, no vendor pricing, no locked-in models.
-- **Collaboration built-in** — the session lives in a chat room: invite a
-  colleague and they see everything the agent does, and can chime in with
-  prompts of their own. No seats, no shared dashboards.
-- **Multi-project** — one room per project, all served by a single broker.
+Coding agents belong where your conversations already live, not behind
+another web app. Alvéole turns a Matrix room into a sealed workspace with a
+real coding agent inside:
 
-## Why these building blocks
+- 🔒 **Compartmentalized by design** — every room is an isolated, disposable
+  workspace. Your GitHub token lives in exactly one and dies with it; shell
+  commands and `git push` pause for your approval before they run.
+- 🛡️ **Sovereign** — self-hosted on your own infrastructure, any OpenRouter
+  model. No closed SaaS, no vendor pricing, no lock-in. Your keys, your data,
+  your rules.
+- 📱 **The phone is the terminal** — the interface is your messenger, not an
+  IDE. The agent works; you review from anywhere.
+- 👥 **Collaboration built-in** — the session lives in a chat room: invite a
+  colleague, they see everything and can chime in. No seats, no dashboards.
+- 🗂️ **One room, one project** — as many parallel agents as you have repos,
+  all served by one always-on broker.
 
-Each piece is replaceable, not a lock-in — that's the point:
+## How to install
 
-- **Matrix** — open, federated, self-hostable protocol with solid mobile
-  clients, so the "messenger as IDE" experience works on infrastructure you
-  control. The transport is an adapter behind a neutral contract: Slack,
-  Telegram or Discord are new adapters, the core doesn't change.
-- **opencode** — open-source, model-agnostic coding agent with a headless
-  server mode and built-in permission gates. The broker just relays prompts
-  and approvals over HTTP; any agent exposing a similar API could take its
-  place.
-- **OpenRouter** — one API key for hundreds of models, with per-model usage
-  and cost reporting. Swap models mid-session (`/model`) without touching the
-  pod — no vendor decides which model you run.
+### docker-compose
 
-## How it works
-
-Two pieces:
-
-- **The broker** — a single always-on bot holding only a Matrix account and
-  an OpenRouter key. When invited to a new room it asks for a repo, a GitHub
-  PAT scoped to that repo, and a model, then provisions an isolated pod for
-  that room. Chat transport is an adapter; the conversation logic is
-  transport-neutral, so another chat platform is a new adapter and nothing
-  else.
-- **The runner** — a minimal throwaway image that clones the room's repo and
-  runs a headless `opencode serve`. Nothing persists: a fresh pod means a
-  fresh clone and a fresh session. The broker relays opencode's own
-  permission prompts (shell commands, `git push`, …) back into the room as
-  yes/no questions.
-
-## Usage
-
-1. Invite the bot to an **unencrypted** Matrix room (E2EE is not supported —
-   see [Security](#security)).
-2. Answer its three onboarding questions: repo, GitHub PAT, model.
-3. Send tasks in plain language. The agent works and reports back.
-
-Commands:
-
-- `/model [id]` — show or change the room's model (any
-  [OpenRouter](https://openrouter.ai/models) model id), effective on the next
-  message.
-- `/usage` — session cost, token breakdown, context-compaction status.
-  A one-line alert every $5 spent.
-- `/connect` — replies with the `kubectl port-forward` + `opencode attach`
-  commands to drive the same session from a local opencode TUI (VPN/cluster
-  network required).
-- `/stop` — tear the room's pod down on demand. Idle rooms tear down
-  automatically after `IDLE_TEARDOWN_HOURS`. The room's repo/token/model are
-  remembered, so the next message re-provisions without re-asking — but
-  starts a **fresh** session (no conversation memory survives a teardown).
-
-## Démarrage docker-compose (5 minutes)
-
-One machine, one command — a bundled Matrix homeserver
+The self-host path: one machine, one command. A bundled Matrix homeserver
 ([continuwuity](https://continuwuity.org), conduwuit's maintained successor),
 [Element Web](https://element.io), and the broker, with per-room runners as
-plain Docker containers (`WORKSPACE_BACKEND=compose`, see `src/docker.ts`).
-The k8s deployment below is unchanged and remains the default in code.
+plain Docker containers (`WORKSPACE_BACKEND=compose`; k8s remains the default
+backend in code).
 
-1. Requirements: Docker with the compose plugin, and ports 8080 free.
+1. Requirements: Docker with the compose plugin, and port 8080 free.
 2. `cp .env.example .env`, then set in `.env`:
    - `OPENROUTER_API_KEY` — your [OpenRouter](https://openrouter.ai) key;
    - `REGISTRATION_TOKEN` — generate one: `openssl rand -hex 12` (the bundled
@@ -125,7 +74,7 @@ Notes:
   binds (only Element's 8080 is published; 8008 stays on loopback, so the
   homeserver's token-gated registration is never reachable from outside).
 
-## Deploying your own (k8s)
+### k8s
 
 Requirements: a Kubernetes cluster (runs on K3s), Node 22+ if building the
 broker image yourself, a Matrix account for the bot, an
@@ -167,6 +116,60 @@ Notes:
 For local development without a cluster, copy `.env.example` to `.env` and
 run `npm run broker` (Kubernetes calls still need in-cluster access, so
 testing against a deployed pod is the practical path).
+
+## Usage
+
+1. Invite the bot to an **unencrypted** Matrix room (E2EE is not supported —
+   see [Security](#security)).
+2. Answer its three onboarding questions: repo, GitHub PAT, model.
+3. Send tasks in plain language. The agent works and reports back.
+
+Commands:
+
+- `/model [id]` — show or change the room's model (any
+  [OpenRouter](https://openrouter.ai/models) model id), effective on the next
+  message.
+- `/usage` — session cost, token breakdown, context-compaction status.
+  A one-line alert every $5 spent.
+- `/connect` — (k8s deployments) replies with the `kubectl port-forward` +
+  `opencode attach` commands to drive the same session from a local opencode
+  TUI (VPN/cluster network required).
+- `/stop` — tear the room's workspace down on demand. Idle rooms tear down
+  automatically after `IDLE_TEARDOWN_HOURS`. The room's repo/token/model are
+  remembered, so the next message re-provisions without re-asking — but
+  starts a **fresh** session (no conversation memory survives a teardown).
+
+## How it works
+
+Two pieces:
+
+- **The broker** — a single always-on bot holding only a Matrix account and
+  an OpenRouter key. When invited to a new room it asks for a repo, a GitHub
+  PAT scoped to that repo, and a model, then provisions an isolated
+  workspace (a pod on k8s, a container on docker-compose) for that room.
+  Chat transport is an adapter; the conversation logic is transport-neutral,
+  so another chat platform is a new adapter and nothing else.
+- **The runner** — a minimal throwaway image that clones the room's repo and
+  runs a headless `opencode serve`. Nothing persists: a fresh pod means a
+  fresh clone and a fresh session. The broker relays opencode's own
+  permission prompts (shell commands, `git push`, …) back into the room as
+  yes/no questions.
+
+### Why these building blocks
+
+Each piece is replaceable, not a lock-in — that's the point:
+
+- **Matrix** — open, federated, self-hostable protocol with solid mobile
+  clients, so the "messenger as IDE" experience works on infrastructure you
+  control. The transport is an adapter behind a neutral contract: Slack,
+  Telegram or Discord are new adapters, the core doesn't change.
+- **opencode** — open-source, model-agnostic coding agent with a headless
+  server mode and built-in permission gates. The broker just relays prompts
+  and approvals over HTTP; any agent exposing a similar API could take its
+  place.
+- **OpenRouter** — one API key for hundreds of models, with per-model usage
+  and cost reporting. Swap models mid-session (`/model`) without touching the
+  pod — no vendor decides which model you run.
 
 ## Security
 

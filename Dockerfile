@@ -1,4 +1,4 @@
-# Coding-agent broker — single global instance. Talks to Matrix, the k8s API
+# Alvéole broker — single global instance. Talks to Matrix, the k8s API
 # or the host docker daemon (to provision/tear down per-room pods/containers)
 # and each room's opencode server over HTTP. It never clones a repo or runs
 # git/gh itself — that's runner/'s job, inside the untrusted per-room pod —

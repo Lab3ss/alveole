@@ -85,4 +85,4 @@ export interface ChatAdapterService {
   readonly parseApprovalAnswer: (text: string) => boolean;
 }
 
-export class ChatAdapter extends Context.Tag("coding-agent/ChatAdapter")<ChatAdapter, ChatAdapterService>() {}
+export class ChatAdapter extends Context.Tag("alveole/ChatAdapter")<ChatAdapter, ChatAdapterService>() {}
