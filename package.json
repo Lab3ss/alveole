@@ -1,0 +1,26 @@
+{
+  "name": "alveole",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "Alvéole — chat-driven autonomous coding agent over Matrix: one room = one project, an isolated opencode-backed workspace per room.",
+  "main": "src/broker.ts",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "broker": "node src/broker.ts",
+    "check": "tsc --noEmit",
+    "test": "node --test test/*.test.ts"
+  },
+  "dependencies": {
+    "@kubernetes/client-node": "^2.0.0",
+    "effect": "^3.22.2",
+    "matrix-bot-sdk": "^0.8.0",
+    "undici": "^8.10.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.4",
+    "typescript": "5.9"
+  }
+}
