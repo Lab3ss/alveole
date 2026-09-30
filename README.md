@@ -46,7 +46,7 @@ _Pick this to self-host everything on one machine — All is up in five minutes.
 All you need is Docker with the compose plugin (bundled with Docker
 Desktop; on Linux it's the `docker-compose-plugin` package) and this repository cloned locally.
 
-#### 2. Configuration (if you DO NOT HAVE a account on an existing Matrix homeserver)
+#### 2. Configuration (if you DO NOT HAVE an account on an existing Matrix homeserver)
 
 This is the batteries-included path: the compose stack brings up a full
 Matrix homeserver ([continuwuity](https://continuwuity.org)) and the
@@ -62,14 +62,12 @@ Copy `.env.example` to `.env` and set:
 - `REGISTRATION_TOKEN` — generate one with `openssl rand -hex 12`: the
   bundled homeserver only accepts token registrations, and the bootstrap uses this one token to create both accounts (the bot's, then yours);
 
-⚠️ to work from a phone or another device, this device must be able to reach: `HOMESERVER_PUBLIC_URL=http://<server-LAN-ip>:8008` and `MATRIX_SERVER_NAME=<server-LAN-ip>` — Element Web runs in your
-  browser and must reach the homeserver by the same address the server
-  knows itself as (leave both at their defaults to use it on the host
-  only).
+> ⚠️ to work from a phone or another device, this device must be able to reach
+> `HOMESERVER_PUBLIC_URL=http://<server-LAN-ip>:8008` and `MATRIX_SERVER_NAME=<server-LAN-ip>`
 
-  Recommendation: Once you validated Alveole fits your needs, self host your own persistent Matrix Homeserver or create an account on [Matrix.org](https://matrix.org/docs/chat_basics/matrix-for-im/#creating-a-matrix-account) so you will be able to use any Matrix client (Mobile, Web or Desktop) and work from everywhere.
+  **Recommendation**: Once you validated Alveole fits your needs, self host your own persistent Matrix Homeserver or create an account on [Matrix.org](https://matrix.org/docs/chat_basics/matrix-for-im/#creating-a-matrix-account) or any Homeserver so you will be able to use any Matrix client you want (Mobile, Web or Desktop) and work from everywhere.
 
-#### 2. Configuration (if you already DO HAVE a Matrix account)
+#### 2. Configuration (if you already DO HAVE a Matrix Homeserver account)
 
 If Matrix is already part of your life — your own homeserver, or an
 account on one — you need none of that bundled plumbing. The broker is the
