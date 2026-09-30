@@ -40,7 +40,7 @@ Four building blocks, each replaceable by design:
 - **OpenRouter** — the models. One key for hundreds of them, with usage and
   cost reporting; swap mid-session without touching a room.
 
-## How to install
+## Installation
 
 ### docker-compose
 
@@ -156,30 +156,23 @@ Commands:
   remembered, so the next message re-provisions without re-asking — but
   starts a **fresh** session (no conversation memory survives a teardown).
 
-## How it works
-
-Two pieces:
-
-- **The broker** — a single always-on bot holding only a Matrix account and
-  an OpenRouter key. When invited to a new room it asks for a repo, a GitHub
-  PAT scoped to that repo, and a model, then provisions an isolated
-  workspace (a pod on k8s, a container on docker-compose) for that room.
-  Chat transport is an adapter; the conversation logic is transport-neutral,
-  so another chat platform is a new adapter and nothing else.
-- **The runner** — a minimal throwaway image that clones the room's repo and
-  runs a headless `opencode serve`. Nothing persists: a fresh pod means a
-  fresh clone and a fresh session. The broker relays opencode's own
-  permission prompts (shell commands, `git push`, …) back into the room as
-  yes/no questions.
-
 ## Security
 
 - **No standing repo access** — the broker holds nothing that can reach a
-  GitHub repo; each room's PAT lives only in that room's Secret, inside that
-  room's pod, deleted on teardown.
-- **Untrusted-workload boundary** — runner pods are non-root, have no
-  Kubernetes API access (`automountServiceAccountToken: false`), and run in
-  a dedicated namespace only the broker can reach.
+  GitHub repo; each room's PAT lives only in that room's Secret (its env file
+  on compose), inside that room's runner, deleted on teardown.
+- **Isolated, disposable runners** — one throwaway runner per room: its own
+  filesystem, its own clone, its own network, zero shared state with any
+  other room. Runners are non-root and hold no cluster credentials (k8s:
+  `automountServiceAccountToken: false`, a dedicated namespace only the
+  broker can reach) and no docker socket — the only components that ever
+  touch infrastructure are the broker and your own CLI.
+- **Nothing persists, automatically** — a room torn down after
+  `IDLE_TEARDOWN_HOURS` of idleness (default 24h) or via `/stop` leaves
+  nothing behind: the runner, its network, and its Secret/env file are
+  deleted, and the PAT goes with them. The room's repo/token/model settings
+  survive in the registry, but the next message re-provisions from a fresh
+  clone and a fresh session — no conversation memory, no stale artifacts.
 - **Approval gate** — opencode's permission prompts (shell commands,
   `git push`, etc.) pause and ask in the room before running.
 - **Rooms are unencrypted** — `matrix-bot-sdk` has no E2EE provider wired
