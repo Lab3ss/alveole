@@ -1,4 +1,4 @@
-# Alvéole
+# Alvéole 🐝
 
 Your coding agent lives in an isolated, ephemeral filesystem — one for each
 of your projects. Self-host the open-source stack, then work and collaborate
@@ -42,13 +42,11 @@ Four building blocks, each replaceable by design:
 
 ## Installation
 
-### docker-compose
+### A. using *docker-compose*
 
-The self-host path: one machine, one command. A bundled Matrix homeserver
+_Pick this to self-host everything on one machine — bundled homeserver
 ([continuwuity](https://continuwuity.org), conduwuit's maintained successor),
-[Element Web](https://element.io), and the broker, with per-room runners as
-plain Docker containers (`WORKSPACE_BACKEND=compose`; k8s remains the default
-backend in code).
+[Element Web](https://element.io), and the broker, up in five minutes._
 
 1. Requirements: Docker with the compose plugin, and port 8080 free.
 2. `cp .env.example .env`, then set in `.env`:
@@ -91,7 +89,10 @@ Notes:
   binds (only Element's 8080 is published; 8008 stays on loopback, so the
   homeserver's token-gated registration is never reachable from outside).
 
-### k8s
+### B. using *k8s*
+
+_Pick this if you already run a cluster — per-room pods land in it, next to
+your other workloads._
 
 Requirements: a Kubernetes cluster (runs on K3s), Node 22+ if building the
 broker image yourself, a Matrix account for the bot, an
@@ -181,15 +182,6 @@ Commands:
   (best-effort), which reduces plaintext exposure but doesn't replace
   transport encryption. Don't onboard repos whose PAT in room history is
   unacceptable to you.
-
-## Development
-
-```sh
-npm install
-npm run check   # typecheck
-npm test        # unit tests
-docker buildx build --platform linux/amd64 -t ghcr.io/lab3ss/coding-agent:X.Y.Z --push .
-```
 
 ## License
 
