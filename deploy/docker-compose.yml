@@ -105,8 +105,11 @@ services:
   bootstrap:
     # Same image as the broker (node 22). Creates the bot/human accounts and
     # the shared room, writes /data/bot-account.json, prints credentials.
+    # Override the image's ENTRYPOINT (node /app/src/broker.ts), not command:
+    # a command override only appends argv to that entrypoint, so this
+    # container would run a second broker and never write bot-account.json.
     image: alveole-broker:local
-    command: ["node", "/app/deploy/bootstrap/bootstrap.mjs"]
+    entrypoint: ["node", "/app/deploy/bootstrap/bootstrap.mjs"]
     restart: "no"
     profiles:
       - bundled
