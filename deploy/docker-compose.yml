@@ -1,0 +1,129 @@
+# Alvéole — self-host solo deployment via docker-compose.
+#
+# Two modes, selected by COMPOSE_PROFILES (see .env.example):
+#   bundled (default): homeserver (continuwuity) + Element Web + one-shot
+#     bootstrap + broker. `docker compose up -d` then read the bootstrap logs
+#     for the Element URL and credentials. The homeserver is only reachable
+#     from the browser (Element) and the broker — 8008 stays loopback-bound.
+#   external (COMPOSE_PROFILES=""): broker only, talking to any homeserver via
+#     MATRIX_HOMESERVER + MATRIX_TOKEN. The bootstrap never runs in this mode,
+#     which is why the broker has no depends_on on it and instead retries
+#     reading /data/bot-account.json at startup (src/broker.ts).
+#
+# Per-room runner containers and their networks are created at RUNTIME by the
+# broker's compose driver (src/docker.ts) on the mounted docker socket — they
+# are deliberately not compose services, so `docker compose down` leaves live
+# rooms alone (the broker re-attaches to their networks lazily on its next
+# workspace call; see src/core/workspace.ts).
+
+name: alveole
+
+services:
+  broker:
+    # Repo root image. Runs as root because it drives the host docker daemon
+    # through the mounted socket (socket group ids differ across hosts) — see
+    # the README security notes for rootless/podman as the hardened option.
+    build: ..
+    image: alveole-broker:local
+    container_name: alveole-broker
+    user: root
+    restart: unless-stopped
+    environment:
+      WORKSPACE_BACKEND: compose
+      REGISTRY_DB_PATH: /data/registry.db
+      RUNNER_IMAGE: ${RUNNER_IMAGE:-alveole-runner:local}
+      RUNNER_MEM: ${RUNNER_MEM:-2g}
+      RUNNER_CPUS: ${RUNNER_CPUS:-2}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:?OPENROUTER_API_KEY is required (BYOK) — set it in .env}
+      # External-Matrix mode: set both; in bundled mode they are left empty and
+      # read from /data/bot-account.json (written by the bootstrap).
+      MATRIX_HOMESERVER: ${MATRIX_HOMESERVER:-}
+      MATRIX_TOKEN: ${MATRIX_TOKEN:-}
+    volumes:
+      # Root-equivalent on the host: see the README security section.
+      - /var/run/docker.sock:/var/run/docker.sock
+      - data:/data
+    networks:
+      - internal
+
+  # Build-only service (never runs): the per-room runner image the compose
+  # driver launches. Build it once before `up`:
+  #   docker compose --profile build build runner-image
+  runner-image:
+    build: ../runner
+    image: ${RUNNER_IMAGE:-alveole-runner:local}
+    profiles:
+      - build
+
+  homeserver:
+    # continuuwuity (maintained successor of conduwuit), digest-pinned.
+    image: ghcr.io/continuwuity/continuwuity:v0.5.9@sha256:b77b1da1622e948bb8bd50ebe185cba68677b32f6969a5d7171dc54613e59bc6
+    command: /sbin/conduwuit
+    restart: unless-stopped
+    profiles:
+      - bundled
+    environment:
+      CONTINUWUITY_CONFIG: /etc/continuwuity/conduwuit.toml
+      # Registration requires this token (m.login.registration_token); the
+      # bootstrap uses it to create the bot + human accounts. Keep it secret.
+      # Empty only in a misconfigured bundled deployment: the bootstrap then
+      # refuses to run, and 8008 is loopback/internal-only anyway (see README).
+      CONTINUWUITY_REGISTRATION_TOKEN: ${REGISTRATION_TOKEN:-}
+      CONTINUWUITY_SERVER_NAME: ${MATRIX_SERVER_NAME:-localhost}
+    volumes:
+      - ./homeserver/conduwuit.toml:/etc/continuwuity/conduwuit.toml:ro
+      - homeserver-data:/var/lib/continuwuity
+    # Loopback only, by design: the browser reaches the homeserver through
+    # HOMESERVER_PUBLIC_URL; never publish 8008 on 0.0.0.0 in bundled mode.
+    ports:
+      - "${HOMESERVER_BIND:-127.0.0.1}:8008:8008"
+    networks:
+      - internal
+
+  element:
+    # vectorim/element-web, digest-pinned. The runtime config.json is rendered
+    # at container start by the mounted entrypoint hook from the template.
+    image: vectorim/element-web:v1.12.30@sha256:3e7dbd4424de9e11c812bc740acf2725b2abe66ea0d0802023b56fd85d3fa09a
+    restart: unless-stopped
+    profiles:
+      - bundled
+    environment:
+      HOMESERVER_PUBLIC_URL: ${HOMESERVER_PUBLIC_URL:-http://localhost:8008}
+      MATRIX_SERVER_NAME: ${MATRIX_SERVER_NAME:-localhost}
+    volumes:
+      - ./element/config.template.json:/element-config.template.json:ro
+      - ./element/render-config.sh:/docker-entrypoint.d/90-render-config.sh:ro
+    ports:
+      - "${ELEMENT_BIND:-0.0.0.0}:8080:80"
+    networks:
+      - internal
+
+  bootstrap:
+    # Same image as the broker (node 22). Creates the bot/human accounts and
+    # the shared room, writes /data/bot-account.json, prints credentials.
+    image: alveole-broker:local
+    command: ["node", "/app/deploy/bootstrap/bootstrap.mjs"]
+    restart: "no"
+    profiles:
+      - bundled
+    environment:
+      HOMESERVER_URL: http://homeserver:8008
+      HOMESERVER_PUBLIC_URL: ${HOMESERVER_PUBLIC_URL:-http://localhost:8008}
+      REGISTRATION_TOKEN: ${REGISTRATION_TOKEN:-}
+      ALVEOLE_BOT_USER: ${ALVEOLE_BOT_USER:-alveole}
+      ALVEOLE_USER_NAME: ${ALVEOLE_USER_NAME:-user}
+      ALVEOLE_ROOM_NAME: ${ALVEOLE_ROOM_NAME:-Alvéole}
+    volumes:
+      - data:/data
+    networks:
+      - internal
+    depends_on:
+      homeserver:
+        condition: service_started
+
+volumes:
+  data:
+  homeserver-data:
+
+networks:
+  internal:

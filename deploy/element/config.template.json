@@ -1,0 +1,11 @@
+{
+  "default_server_config": {
+    "m.homeserver": {
+      "base_url": "__HOMESERVER_PUBLIC_URL__",
+      "server_name": "__MATRIX_SERVER_NAME__"
+    }
+  },
+  "brand": "Alvéole",
+  "disable_guests": true,
+  "show_labs_settings": false
+}
