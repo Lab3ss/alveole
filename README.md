@@ -115,7 +115,7 @@ docker compose -f deploy/docker-compose.yml --env-file .env up -d
 
 The stack is up; step into the room.
 
-- Matrix bundled mode: `docker compose -f deploy/docker-compose.yml logs bootstrap`
+- Matrix bundled mode: `docker compose -f deploy/docker-compose.yml --env-file .env logs bootstrap`
   prints a credentials block — the Element Web URL (port 8080 of the
   server) and the username/password the bootstrap generated for you. Open
   Element, sign in, and the room is already there, with the bot waiting.
