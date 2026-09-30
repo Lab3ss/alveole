@@ -1,8 +1,9 @@
 # Alvéole
 
-Drive [opencode](https://opencode.ai) from your chat app. Send a task in
-natural language to a Matrix room — the agent codes, commits, and opens a PR;
-you review from GitHub mobile. **One room = one project.**
+Your coding agent lives in your messenger — and in an isolated filesystem,
+on your own infrastructure. Every room is a sealed, disposable workspace:
+your tokens live and die inside it, nothing runs without your approval, and
+no vendor ever holds your keys.
 
 ## Motivation
 
@@ -16,12 +17,29 @@ real coding agent inside:
 - 🛡️ **Sovereign** — self-hosted on your own infrastructure, any OpenRouter
   model. No closed SaaS, no vendor pricing, no lock-in. Your keys, your data,
   your rules.
-- 📱 **The phone is the terminal** — the interface is your messenger, not an
-  IDE. The agent works; you review from anywhere.
+- 🗂️ **One channel, one project, one filesystem** — as many parallel agents
+  as you have repos, each sealed in its own room, all served by one
+  always-on broker.
 - 👥 **Collaboration built-in** — the session lives in a chat room: invite a
   colleague, they see everything and can chime in. No seats, no dashboards.
-- 🗂️ **One room, one project** — as many parallel agents as you have repos,
-  all served by one always-on broker.
+- 📱 **Phone, web, desktop** — the room follows you across devices; pick up
+  the session wherever you are.
+
+## Components
+
+Four building blocks, each replaceable by design:
+
+- **Matrix** — the transport. Open, federated, self-hostable, with clients
+  for phone, web, and desktop. Any other chat platform is a new adapter; the
+  core doesn't change.
+- **The orchestrator** — the core. Onboarding, approvals, guardrails, and
+  workspace lifecycle, transport-neutral: it never mentions Matrix, k8s, or
+  docker.
+- **opencode** — the agent. Headless server mode, built-in permission
+  gates, model-agnostic. Anything exposing a similar API could take its
+  place.
+- **OpenRouter** — the models. One key for hundreds of them, with usage and
+  cost reporting; swap mid-session without touching a room.
 
 ## How to install
 
@@ -154,22 +172,6 @@ Two pieces:
   fresh clone and a fresh session. The broker relays opencode's own
   permission prompts (shell commands, `git push`, …) back into the room as
   yes/no questions.
-
-### Why these building blocks
-
-Each piece is replaceable, not a lock-in — that's the point:
-
-- **Matrix** — open, federated, self-hostable protocol with solid mobile
-  clients, so the "messenger as IDE" experience works on infrastructure you
-  control. The transport is an adapter behind a neutral contract: Slack,
-  Telegram or Discord are new adapters, the core doesn't change.
-- **opencode** — open-source, model-agnostic coding agent with a headless
-  server mode and built-in permission gates. The broker just relays prompts
-  and approvals over HTTP; any agent exposing a similar API could take its
-  place.
-- **OpenRouter** — one API key for hundreds of models, with per-model usage
-  and cost reporting. Swap models mid-session (`/model`) without touching the
-  pod — no vendor decides which model you run.
 
 ## Security
 
