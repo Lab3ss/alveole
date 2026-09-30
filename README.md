@@ -50,33 +50,66 @@ _Pick this to self-host everything on one machine — bundled homeserver
 
 #### 1. Requirements
 
-Docker with the compose plugin, and port 8080 free for Element Web.
+All you need is Docker with the compose plugin (bundled with Docker
+Desktop; on Linux it's the `docker-compose-plugin` package) and one free
+port: 8080, which serves the Element Web chat UI. Nothing else is exposed —
+the homeserver listens on 8008 but stays bound to the machine's loopback,
+so only the broker and the browser ever reach it.
 
 #### 2. Configuration (if you DO NOT HAVE a Matrix account)
 
-`cp .env.example .env`, then set in `.env`:
+This is the batteries-included path: you don't need to know anything about
+running Matrix. Besides the broker, the compose stack brings up a full
+Matrix homeserver ([continuwuity](https://continuwuity.org)) and the
+Element Web chat client, then a one-shot bootstrap registers two accounts
+on that fresh homeserver for you — the bot's and yours — and creates the
+private room you'll chat in. You never install a Matrix server, fill a
+registration form, or configure a client: it all happens inside the stack.
 
-- `OPENROUTER_API_KEY` — your [OpenRouter](https://openrouter.ai) key;
-- `REGISTRATION_TOKEN` — generate one: `openssl rand -hex 12` (the bundled
-  homeserver only accepts token registrations; the bootstrap uses it to
-  create your account and the bot's);
+Copy `.env.example` to `.env` and set:
+
+- `OPENROUTER_API_KEY` — your [OpenRouter](https://openrouter.ai) key: the
+  single LLM credential; every room's agent bills its model calls through
+  it;
+- `REGISTRATION_TOKEN` — generate one with `openssl rand -hex 12`: the
+  bundled homeserver refuses open sign-ups and only accepts token
+  registrations, and the bootstrap uses this one token to create both
+  accounts (the bot's, then yours);
 - to chat from a phone or another machine: `HOMESERVER_PUBLIC_URL=http://<server-LAN-ip>:8008`
-  and `MATRIX_SERVER_NAME=<server-LAN-ip>` (leave both at their defaults to
-  use it on the host only).
+  and `MATRIX_SERVER_NAME=<server-LAN-ip>` — Element Web runs in your
+  browser and must reach the homeserver by the same address the server
+  knows itself as (leave both at their defaults to use it on the host
+  only).
 
 #### 2. Configuration (if you already DO HAVE a Matrix account)
 
-`cp .env.example .env`, then set in `.env`:
+If Matrix is already part of your life — your own homeserver, or an
+account on one — you need none of that bundled plumbing. The broker is the
+only component that ever speaks Matrix: point it at your homeserver and
+give it an account to sign in as, and it joins rooms like any other user.
 
-- `OPENROUTER_API_KEY` — your [OpenRouter](https://openrouter.ai) key;
+Copy `.env.example` to `.env` and set:
+
+- `OPENROUTER_API_KEY` — your [OpenRouter](https://openrouter.ai) key: the
+  single LLM credential; every room's agent bills its model calls through
+  it;
 - `MATRIX_HOMESERVER` — the URL of your homeserver;
-- `MATRIX_TOKEN` — an access token for the bot's account on that homeserver;
-- `COMPOSE_PROFILES=""` — run the broker alone against your homeserver (the
-  bundled homeserver, Element Web, and the bootstrap are left out).
+- `MATRIX_TOKEN` — an access token for the bot's account, a dedicated user
+  on that homeserver that the broker signs in as (most clients can print
+  one — in Element: Settings → Help & About → Access Token);
+- `COMPOSE_PROFILES=""` — compose profiles decide which services come up;
+  emptying it leaves out the bundled homeserver, Element Web, and the
+  bootstrap: only the broker runs, against your homeserver.
+
+One constraint to know upfront: the bot cannot decrypt encrypted rooms, so
+onboard it in unencrypted ones (see [Security](#security)).
 
 #### 3. Build
 
-Build the runner image once (it runs your repos, so it's built locally):
+Every room gets its own throwaway container that clones the repo and runs
+the agent inside — that's the runner image. It isn't published anywhere:
+it's built from this repo, on this machine, because it's what executes
+your code. Build it once; every room reuses it afterwards:
 
 ```sh
 docker compose --profile build -f deploy/docker-compose.yml --env-file .env build runner-image
@@ -84,7 +117,14 @@ docker compose --profile build -f deploy/docker-compose.yml --env-file .env buil
 
 #### 4. Start
 
-Start everything:
+Bring the stack up in the background. In bundled mode compose starts the
+homeserver and Element Web, then the bootstrap: it waits for the
+homeserver to answer, registers the two accounts, creates the shared room,
+writes the bot's credentials where the broker expects them, and exits —
+the broker then sits waiting for you in Matrix. In external mode only the
+broker starts, and it signs into your homeserver with the token from step
+2. Room containers don't start here: the broker creates one per room, on
+demand, as you onboard rooms.
 
 ```sh
 docker compose -f deploy/docker-compose.yml --env-file .env up -d
@@ -92,14 +132,21 @@ docker compose -f deploy/docker-compose.yml --env-file .env up -d
 
 #### 5. Enjoy
 
-Bundled mode: `docker compose -f deploy/docker-compose.yml logs bootstrap`
-prints the credentials block — open Element Web (port 8080 of the server),
-sign in with the printed username/password, and say hi in the room.
-External mode: invite the bot to an unencrypted Matrix room from your usual
-client (see [Usage](#usage)).
+The stack is up; step into the room.
 
-Either way, the bot asks for a repo, a GitHub PAT scoped to it, and a
-model — then it works exactly as in any other room.
+- Bundled mode: `docker compose -f deploy/docker-compose.yml logs bootstrap`
+  prints a credentials block — the Element Web URL (port 8080 of the
+  server) and the username/password the bootstrap generated for you. Open
+  Element, sign in, and the room is already there, with the bot waiting.
+- External mode: from your usual client, create an unencrypted room and
+  invite the bot's user; it joins and starts the same onboarding (see
+  [Usage](#usage)).
+
+Then say hi: the bot walks you through three questions — which repo to work
+on, a GitHub PAT scoped to that repo (it lives only inside that room's
+runner and dies with it — see [Security](#security)), and which
+[OpenRouter](https://openrouter.ai) model to use. From then on, just send
+tasks in plain language.
 
 Notes:
 
@@ -118,20 +165,34 @@ Notes:
 _Pick this if you already run a cluster — per-room pods land in it, next to
 your other workloads._
 
-Requirements: a Kubernetes cluster (runs on K3s), Node 22+ if building the
-broker image yourself, a Matrix account for the bot, an
-[OpenRouter](https://openrouter.ai) API key, and GitHub PATs scoped to the
-repos you'll onboard.
+Requirements, in plain terms:
 
-Two images, both `linux/amd64`:
+- a Kubernetes cluster — any cluster works; it's exercised on K3s. Each
+  room you onboard becomes a Pod in it;
+- Node 22+ — only if you build the broker image yourself (both images are
+  published on ghcr for `linux/amd64`, so most people skip this);
+- a Matrix account for the bot — a dedicated user on the homeserver of
+  your choice; the broker signs in as that user with an access token (see
+  the env vars below), and only in unencrypted rooms (no E2EE);
+- an [OpenRouter](https://openrouter.ai) API key — the single LLM
+  credential, copied into every room's pod;
+- GitHub PATs scoped to the repos you'll onboard — one per repo, asked in
+  the room at onboarding, living only inside that room's pod.
 
-- `ghcr.io/lab3ss/coding-agent` — the broker (built from this repo's
-  `Dockerfile`).
-- `ghcr.io/lab3ss/coding-agent-runner` — the runner (built from
-  `runner/Dockerfile`).
+Two images, both `linux/amd64` — pull them from ghcr, or build them from
+this repo:
 
-Deploy the broker as a single Deployment with these env vars (a k8s Secret
-via `envFrom` works well):
+- `ghcr.io/lab3ss/coding-agent` — the broker, the always-on core: it signs
+  into Matrix, listens in rooms, and provisions each room's workspace
+  (built from this repo's `Dockerfile`).
+- `ghcr.io/lab3ss/coding-agent-runner` — the runner, what each room's pod
+  actually runs: a disposable, isolated workspace with the agent inside
+  (built from `runner/Dockerfile`).
+
+The broker is the only thing you deploy: one Deployment, in-cluster, fed
+these env vars (a k8s Secret via `envFrom` works well). In order, they
+tell it who it is on Matrix, what it may spend, where rooms live, and how
+hard it may push (the guardrails):
 
 | Var | Purpose |
 |-----|---------|
