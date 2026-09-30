@@ -1,4 +1,4 @@
-# Alvéole 🐝
+# Alvéole 🐝🤖
 
 Your coding agent lives in an isolated, ephemeral filesystem — one for each
 of your projects. Self-host the open-source stack, then work and collaborate
@@ -6,18 +6,13 @@ from anywhere, in any Matrix client.
 
 ## Motivation
 
-Coding agents belong where your conversations already live, not behind
-another web app. Alvéole turns a Matrix room into a sealed workspace with a
-real coding agent inside:
-
 - 🔒 **Compartmentalized by design** — every room is an isolated, disposable
-  workspace. Your GitHub token lives in exactly one and dies with it; shell
-  commands and `git push` pause for your approval before they run.
+  workspace running inside its own pod or container. Your GitHub token lives in exactly one and dies with it;
 - 🛡️ **Sovereign** — self-hosted on your own infrastructure, any OpenRouter
   model. No closed SaaS, no vendor pricing, no lock-in. Your keys, your data,
   your rules.
 - 🗂️ **One channel, one project, one filesystem** — as many parallel agents
-  as you have repos, each sealed in its own room, all served by one
+  as you have repos or even tasks, each sealed in its own room, all served by one
   always-on broker.
 - 👥 **Collaboration built-in** — the session lives in a chat room: invite a
   colleague, they see everything and can chime in. No seats, no dashboards.
@@ -42,29 +37,22 @@ Four building blocks, each replaceable by design:
 
 ## Installation
 
-### A. using *docker-compose*
+### A. Running locally using *docker-compose*
 
-_Pick this to self-host everything on one machine — bundled homeserver
-([continuwuity](https://continuwuity.org), conduwuit's maintained successor),
-[Element Web](https://element.io), and the broker, up in five minutes._
+_Pick this to self-host everything on one machine — All is up in five minutes._
 
 #### 1. Requirements
 
 All you need is Docker with the compose plugin (bundled with Docker
-Desktop; on Linux it's the `docker-compose-plugin` package) and one free
-port: 8080, which serves the Element Web chat UI. Nothing else is exposed —
-the homeserver listens on 8008 but stays bound to the machine's loopback,
-so only the broker and the browser ever reach it.
+Desktop; on Linux it's the `docker-compose-plugin` package) and this repository cloned locally.
 
-#### 2. Configuration (if you DO NOT HAVE a Matrix account)
+#### 2. Configuration (if you DO NOT HAVE a account on an existing Matrix homeserver)
 
-This is the batteries-included path: you don't need to know anything about
-running Matrix. Besides the broker, the compose stack brings up a full
+This is the batteries-included path: the compose stack brings up a full
 Matrix homeserver ([continuwuity](https://continuwuity.org)) and the
 Element Web chat client, then a one-shot bootstrap registers two accounts
 on that fresh homeserver for you — the bot's and yours — and creates the
-private room you'll chat in. You never install a Matrix server, fill a
-registration form, or configure a client: it all happens inside the stack.
+private room you'll chat in. All happens inside the stack.
 
 Copy `.env.example` to `.env` and set:
 
@@ -72,14 +60,14 @@ Copy `.env.example` to `.env` and set:
   single LLM credential; every room's agent bills its model calls through
   it;
 - `REGISTRATION_TOKEN` — generate one with `openssl rand -hex 12`: the
-  bundled homeserver refuses open sign-ups and only accepts token
-  registrations, and the bootstrap uses this one token to create both
-  accounts (the bot's, then yours);
-- to chat from a phone or another machine: `HOMESERVER_PUBLIC_URL=http://<server-LAN-ip>:8008`
-  and `MATRIX_SERVER_NAME=<server-LAN-ip>` — Element Web runs in your
+  bundled homeserver only accepts token registrations, and the bootstrap uses this one token to create both accounts (the bot's, then yours);
+
+⚠️ to work from a phone or another device, this device must be able to reach: `HOMESERVER_PUBLIC_URL=http://<server-LAN-ip>:8008` and `MATRIX_SERVER_NAME=<server-LAN-ip>` — Element Web runs in your
   browser and must reach the homeserver by the same address the server
   knows itself as (leave both at their defaults to use it on the host
   only).
+
+  Recommendation: Once you validated Alveole fits your needs, self host your own persistent Matrix Homeserver or create an account on [Matrix.org](https://matrix.org/docs/chat_basics/matrix-for-im/#creating-a-matrix-account) so you will be able to use any Matrix client (Mobile, Web or Desktop) and work from everywhere.
 
 #### 2. Configuration (if you already DO HAVE a Matrix account)
 
@@ -104,7 +92,7 @@ Copy `.env.example` to `.env` and set:
 One constraint to know upfront: the bot cannot decrypt encrypted rooms, so
 onboard it in unencrypted ones (see [Security](#security)).
 
-#### 3. Build
+#### 3. Build the runner
 
 Every room gets its own throwaway container that clones the repo and runs
 the agent inside — that's the runner image. It isn't published anywhere:
@@ -117,14 +105,7 @@ docker compose --profile build -f deploy/docker-compose.yml --env-file .env buil
 
 #### 4. Start
 
-Bring the stack up in the background. In bundled mode compose starts the
-homeserver and Element Web, then the bootstrap: it waits for the
-homeserver to answer, registers the two accounts, creates the shared room,
-writes the bot's credentials where the broker expects them, and exits —
-the broker then sits waiting for you in Matrix. In external mode only the
-broker starts, and it signs into your homeserver with the token from step
-2. Room containers don't start here: the broker creates one per room, on
-demand, as you onboard rooms.
+Bring the stack up in the background.
 
 ```sh
 docker compose -f deploy/docker-compose.yml --env-file .env up -d
@@ -134,11 +115,12 @@ docker compose -f deploy/docker-compose.yml --env-file .env up -d
 
 The stack is up; step into the room.
 
-- Bundled mode: `docker compose -f deploy/docker-compose.yml logs bootstrap`
+- Matrix bundled mode: `docker compose -f deploy/docker-compose.yml logs bootstrap`
   prints a credentials block — the Element Web URL (port 8080 of the
   server) and the username/password the bootstrap generated for you. Open
   Element, sign in, and the room is already there, with the bot waiting.
-- External mode: from your usual client, create an unencrypted room and
+
+- External Matrix mode: from your usual client, create an unencrypted room and
   invite the bot's user; it joins and starts the same onboarding (see
   [Usage](#usage)).
 
@@ -160,7 +142,7 @@ Notes:
   binds (only Element's 8080 is published; 8008 stays on loopback, so the
   homeserver's token-gated registration is never reachable from outside).
 
-### B. using *k8s*
+### B. Add to your cluster using *k8s*
 
 _Pick this if you already run a cluster — per-room pods land in it, next to
 your other workloads._
