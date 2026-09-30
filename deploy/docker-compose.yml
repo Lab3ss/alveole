@@ -25,6 +25,10 @@ services:
     # the README security notes for rootless/podman as the hardened option.
     build: ..
     image: alveole-broker:local
+    # Build it here, never pull: the tag exists only on this machine, and
+    # compose's fallback pull attempt against Docker Hub reads as an error
+    # on a first `up` — confusing, since the build right after succeeds.
+    pull_policy: build
     container_name: alveole-broker
     user: root
     restart: unless-stopped
