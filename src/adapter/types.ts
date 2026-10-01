@@ -64,10 +64,14 @@ export interface ChatAdapterService {
    * raw cause and exits.
    * `onAbandoned` fires when every other participant has left a conversation —
    * platform-specific membership semantics stay inside the adapter; the core
-   * just gets told "nobody can ever come back to this one". */
+   * just gets told "nobody can ever come back to this one".
+   * `onJoined` fires when the bot gains membership in a conversation (a fresh
+   * invite accepted, and once per already-joined conversation at startup) —
+   * lets the core greet it without waiting for the first message. */
   readonly start: (
     onInbound: (msg: InboundMessage) => void,
     onAbandoned: (conversationId: ConversationId) => void,
+    onJoined: (conversationId: ConversationId) => void,
   ) => Effect.Effect<void, "chat-start-failed">;
   /** Renders and delivers one event. Must never fail (logs internally) — chat
    * delivery is best-effort and must not abort whatever the core is doing. */
