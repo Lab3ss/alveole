@@ -102,7 +102,7 @@ export async function provisionRoom(name: string, env: RoomEnv, agentRules?: str
     coreApi().createNamespacedPod({
       namespace: ROOMS_NS,
       body: {
-        metadata: { name, labels: { app: "coding-agent-room", room: name } },
+        metadata: { name, labels: { app: "alveole-room", room: name } },
         spec: {
           automountServiceAccountToken: false,
           restartPolicy: "Never",

@@ -160,10 +160,10 @@ Requirements, in plain terms:
 Two images, both `linux/amd64` — pull them from ghcr, or build them from
 this repo:
 
-- `ghcr.io/lab3ss/coding-agent` — the broker, the always-on core: it signs
+- `ghcr.io/lab3ss/alveole` — the broker, the always-on core: it signs
   into Matrix, listens in rooms, and provisions each room's workspace
   (built from this repo's `Dockerfile`).
-- `ghcr.io/lab3ss/coding-agent-runner` — the runner, what each room's pod
+- `ghcr.io/lab3ss/alveole-runner` — the runner, what each room's pod
   actually runs: a disposable, isolated workspace with the agent inside
   (built from `runner/Dockerfile`).
 
