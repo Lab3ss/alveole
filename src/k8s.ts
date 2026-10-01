@@ -1,14 +1,14 @@
 /**
  * Provisions/tears down the per-room runner Pod+Secret+Service in the
  * per-room namespace (ROOMS_NAMESPACE). The broker's own ServiceAccount is scoped
- * (via a namespaced Role/RoleBinding, see apps/coding-agent/role.yaml in the
- * gitops repo) to create/get/list/delete exactly these three kinds, only in
+ * (via a namespaced Role/RoleBinding defined in the gitops repo) to
+ * create/get/list/delete exactly these three kinds, only in
  * that one namespace — it has no access to its own namespace or anywhere else.
  */
 import * as crypto from "node:crypto";
 import * as k8s from "@kubernetes/client-node";
 
-const ROOMS_NS = process.env.ROOMS_NAMESPACE ?? "coding-agent-rooms";
+const ROOMS_NS = process.env.ROOMS_NAMESPACE ?? "alveole-rooms";
 const RUNNER_IMAGE = process.env.RUNNER_IMAGE ?? "ghcr.io/lab3ss/alveole-runner:0.3.0";
 // Shared with the compose driver (src/docker.ts): the runner's opencode
 // server listens on this port in both backends.
