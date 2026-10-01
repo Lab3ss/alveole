@@ -386,6 +386,23 @@ test("abandoning a conversation that never onboarded is a no-op", async () => {
   assert.equal(calls.teardown.length, 0);
 });
 
+test("joining a conversation proactively greets with the onboarding opener", async () => {
+  reset();
+  await Effect.runPromise(orchestrator.greet("!joined"));
+  assert.equal(rooms.get("!joined")?.onboarding, "repo");
+  const info = recorded.find((r) => r.conversationId === "!joined" && r.event.type === "info");
+  assert.ok(info);
+  assert.ok(info.event.type === "info" && info.event.text.includes("what repo should I work on"));
+});
+
+test("greeting a conversation that is already known is a no-op", async () => {
+  reset();
+  await onboard("!t11");
+  recorded.length = 0;
+  await Effect.runPromise(orchestrator.greet("!t11"));
+  assert.equal(recorded.length, 0);
+});
+
 test("/model updates per-message routing without touching the pod", async () => {
   reset();
   await onboard("!t6");

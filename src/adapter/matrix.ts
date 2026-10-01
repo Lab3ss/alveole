@@ -181,8 +181,16 @@ const makeMatrixAdapter = (config: MatrixAdapterConfig): Effect.Effect<ChatAdapt
     const start = (
       onInbound: (msg: InboundMessage) => void,
       onAbandoned: (conversationId: string) => void,
+      onJoined: (conversationId: string) => void,
     ): Effect.Effect<void, "chat-start-failed"> =>
       Effect.gen(function* () {
+        // The bot's own join: AutojoinRoomsMixin accepts invites, and the SDK
+        // emits room.join once for a room it wasn't already in when start()
+        // ran (lastJoinedRoomIds dedups restarts). Greet it right away so
+        // onboarding begins without waiting for the user's first message.
+        client.on("room.join", (roomId: string) => {
+          onJoined(roomId);
+        });
         client.on("room.message", (roomId: string, event: any) => {
           if (event.sender === me) return;
           if (!event.content || event.content.msgtype !== "m.text") return;
@@ -220,6 +228,18 @@ const makeMatrixAdapter = (config: MatrixAdapterConfig): Effect.Effect<ChatAdapt
             return "chat-start-failed" as const;
           },
         });
+        // client.start() snapshots the joined rooms (so room.join won't fire
+        // for them) — greet those too, otherwise a room the bot already sits
+        // in (bundled mode's pre-created room, or an invite accepted while the
+        // broker was down) never gets its onboarding prompt. The core no-ops
+        // on conversations it already knows.
+        const joined = yield* Effect.tryPromise(() => client.getJoinedRooms()).pipe(
+          Effect.catchAll((err) => {
+            console.warn("[matrix] failed to list joined rooms for greeting:", describeError(err));
+            return Effect.succeed([] as string[]);
+          }),
+        );
+        for (const roomId of joined) onJoined(roomId);
       });
 
     return {

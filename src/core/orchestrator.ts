@@ -26,6 +26,15 @@ import { Workspace, type Failure } from "./workspace.ts";
 
 const COST_ALERT_STEP_USD = 5;
 
+/** The onboarding opener — sent proactively on join (see greet) and re-sent
+ * when a room still at the repo step sends something that isn't a repo. */
+const REPO_PROMPT =
+  "Let's get this workspace set up in three quick steps:\n\n" +
+  "1. Send the repo I should work on — `owner/name` or a GitHub URL.\n" +
+  "2. Send a GitHub PAT scoped to that repo — it stays only inside this room's isolated workspace.\n" +
+  "3. Pick an Openrouter model.\n\n" +
+  "Let's start with step 1: what repo should I work on?";
+
 export type OrchestratorConfig = {
   /** Idle threshold before a live pod is torn down automatically. */
   readonly idleTeardownMs: number;
@@ -51,6 +60,10 @@ export interface OrchestratorService {
    * entirely. Exposed alongside handleInbound so any adapter's membership mechanism (or a
    * future non-chat trigger) can reach it without going through `start`. */
   readonly abandon: (conversationId: string) => Effect.Effect<void>;
+  /** Greets a freshly joined conversation with the onboarding opener, unless it's
+   * already known (onboarding in progress or done). Driven by the adapter's
+   * onJoined, so onboarding starts without waiting for a first message. */
+  readonly greet: (conversationId: string) => Effect.Effect<void>;
   /** Starts background loops (idle sweep) and hooks the chat adapter's inbound
    * stream into handleInbound. Forks and returns immediately. Fails with a
    * stable code if the transport can't come up — boot should crash on it. */
@@ -463,6 +476,17 @@ const make = (config: OrchestratorConfig) =>
         registry.delete(conversationId);
       });
 
+    /** Bot just joined a conversation: start onboarding immediately instead of
+     * waiting for the user to speak first. No-op if the conversation is already
+     * known — an onboarded room, one mid-onboarding, or a repeat join signal
+     * (the adapter can fire this both on a fresh join and at startup). */
+    const greet = (conversationId: string): Effect.Effect<void> =>
+      Effect.gen(function* () {
+        if (registry.get(conversationId)) return;
+        registry.create(conversationId);
+        yield* send(conversationId, { type: "info", text: REPO_PROMPT });
+      });
+
     /** Live usage pull, not the cached SSE state — always accurate, and works even
      * before any session.updated event has arrived. */
     const sendUsage = (room: Room): Effect.Effect<void, Failure<"usage-fetch-failed" | "secret-read-failed">> =>
@@ -706,15 +730,7 @@ const make = (config: OrchestratorConfig) =>
         if (room.onboarding === "repo") {
           const repo = parseRepo(body);
           if (!repo) {
-            yield* send(roomId, {
-              type: "info",
-              text:
-                "Welcome! Let's get this workspace set up in three quick steps:\n\n" +
-                "1. Send the repo I should work on — `owner/name` or a GitHub URL.\n" +
-                "2. Send a GitHub PAT scoped to that repo — it stays only inside this room's isolated workspace.\n" +
-                "3. Pick an Openrouter model.\n\n" +
-                "Let's start with step 1: what repo should I work on?",
-            });
+            yield* send(roomId, { type: "info", text: REPO_PROMPT });
             return;
           }
           room.repo = repo;
@@ -808,10 +824,15 @@ const make = (config: OrchestratorConfig) =>
               console.error(`[${conversationId}] abandon failure:`, describeError(err)),
             );
           },
+          (conversationId) => {
+            void Effect.runPromise(greet(conversationId)).catch((err) =>
+              console.error(`[${conversationId}] greet failure:`, describeError(err)),
+            );
+          },
         );
       });
 
-    return { handleInbound, abandon, start } satisfies OrchestratorService;
+    return { handleInbound, abandon, greet, start } satisfies OrchestratorService;
   });
 
 export const OrchestratorLive = (config: OrchestratorConfig) => Layer.effect(Orchestrator, make(config));
