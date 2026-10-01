@@ -178,7 +178,7 @@ hard it may push (the guardrails):
 |-----|---------|
 | `MATRIX_HOMESERVER`, `MATRIX_TOKEN` | the bot's Matrix account |
 | `OPENROUTER_API_KEY` | the only LLM credential, copied into every room's pod |
-| `WORKSPACE_BACKEND` | `k8s` (default) or `compose` — which infra driver provisions per-room workspaces |
+| `WORKSPACE_BACKEND` | which infra driver provisions per-room workspaces: `k8s` or `compose`. The shipped `.env.example` sets `compose`; the code default is `k8s` |
 | `ROOMS_NAMESPACE` | where per-room pods live; default `coding-agent-rooms` |
 | `RUNNER_IMAGE` | runner image tag; default `ghcr.io/lab3ss/coding-agent-runner:0.3.0` |
 | `IDLE_TEARDOWN_HOURS` | idle threshold before auto-teardown; default `24` |
@@ -196,9 +196,11 @@ Notes:
 - Use a `Recreate` strategy: a restart interrupts in-flight tasks, but
   nothing is lost — rooms re-provision on their next message.
 
-For local development without a cluster, copy `.env.example` to `.env` and
-run `npm run broker` (Kubernetes calls still need in-cluster access, so
-testing against a deployed pod is the practical path).
+For local development, copy `.env.example` to `.env` (its
+`WORKSPACE_BACKEND=compose` provisions runner containers through the local
+docker daemon) and run `npm run broker`, which loads `.env` automatically.
+The `k8s` backend calls `kc.loadFromCluster()` and only works inside a real
+pod, so testing it locally means running against a deployed pod.
 
 ## Usage
 

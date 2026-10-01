@@ -98,8 +98,8 @@ function render(event: OutboundEvent): string {
       return "🗜️ Context got compacted (older history was trimmed to make room).";
     case "token-received":
       return event.redacted
-        ? "Got it (and removed that message from the room history). Which model? (any OpenRouter model id, e.g. `anthropic/claude-sonnet-4.5` — see openrouter.ai/models)"
-        : "Got it. ⚠️ I couldn't remove that message from history (I need moderator power level in this room to redact it) — make me a moderator if you want that. Which model? (any OpenRouter model id, e.g. `anthropic/claude-sonnet-4.5` — see openrouter.ai/models)";
+        ? "Got it (and removed from history)\n. Which model? `deepseek/deepseek-v4.1-flash`, `anthropic/claude-sonnet-4.5`, or any OpenRouter model id, see openrouter.ai/models"
+        : "Got it. ⚠️ I couldn't remove that message from history (I need moderator power level in this room to redact it) — make me a moderator if you want that.\nWhich model? `deepseek/deepseek-v4.1-flash`, `anthropic/claude-sonnet-4.5`, or any OpenRouter model id, see openrouter.ai/models";
     case "teardown":
       return `🛑 Stopped (${event.reason}). ${event.repo} is still remembered — send a message to resume.`;
   }
