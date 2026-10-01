@@ -1,7 +1,7 @@
 # Alvéole — self-host solo deployment via docker-compose.
 #
 # Two modes, selected by COMPOSE_PROFILES (see .env.example):
-#   bundled (default): homeserver (continuwuity) + Element Web + one-shot
+#   matrix-included (default): homeserver (continuwuity) + Element Web + one-shot
 #     bootstrap + broker. `docker compose up -d` then read the bootstrap logs
 #     for the Element URL and credentials. The homeserver is only reachable
 #     from the browser (Element) and the broker — 8008 stays loopback-bound.
@@ -39,8 +39,8 @@ services:
       RUNNER_MEM: ${RUNNER_MEM:-2g}
       RUNNER_CPUS: ${RUNNER_CPUS:-2}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:?OPENROUTER_API_KEY is required (BYOK) — set it in .env}
-      # External-Matrix mode: set both; in bundled mode they are left empty and
-      # read from /data/bot-account.json (written by the bootstrap).
+      # External-Matrix mode: set both; in matrix-included mode they are left
+      # empty and read from /data/bot-account.json (written by the bootstrap).
       MATRIX_HOMESERVER: ${MATRIX_HOMESERVER:-}
       MATRIX_TOKEN: ${MATRIX_TOKEN:-}
     volumes:
@@ -65,20 +65,20 @@ services:
     command: /sbin/conduwuit
     restart: unless-stopped
     profiles:
-      - bundled
+      - matrix-included
     environment:
       CONTINUWUITY_CONFIG: /etc/continuwuity/conduwuit.toml
       # Registration requires this token (m.login.registration_token); the
-      # bootstrap uses it to create the bot + human accounts. Keep it secret.
-      # Empty only in a misconfigured bundled deployment: the bootstrap then
-      # refuses to run, and 8008 is loopback/internal-only anyway (see README).
-      CONTINUWUITY_REGISTRATION_TOKEN: ${REGISTRATION_TOKEN:-}
+      # bootstrap uses it to create the bot + human accounts. It defaults to a
+      # known local value so the stack needs no setup; override REGISTRATION_TOKEN
+      # in .env for a custom one. 8008 is loopback/internal-only anyway (README).
+      CONTINUWUITY_REGISTRATION_TOKEN: ${REGISTRATION_TOKEN:-alveole-local-registration}
       CONTINUWUITY_SERVER_NAME: ${MATRIX_SERVER_NAME:-localhost}
     volumes:
       - ./homeserver/conduwuit.toml:/etc/continuwuity/conduwuit.toml:ro
       - homeserver-data:/var/lib/continuwuity
     # Loopback only, by design: the browser reaches the homeserver through
-    # HOMESERVER_PUBLIC_URL; never publish 8008 on 0.0.0.0 in bundled mode.
+    # HOMESERVER_PUBLIC_URL; never publish 8008 on 0.0.0.0 in matrix-included mode.
     ports:
       - "${HOMESERVER_BIND:-127.0.0.1}:8008:8008"
     networks:
@@ -90,7 +90,7 @@ services:
     image: vectorim/element-web:v1.12.30@sha256:3e7dbd4424de9e11c812bc740acf2725b2abe66ea0d0802023b56fd85d3fa09a
     restart: unless-stopped
     profiles:
-      - bundled
+      - matrix-included
     environment:
       HOMESERVER_PUBLIC_URL: ${HOMESERVER_PUBLIC_URL:-http://localhost:8008}
       MATRIX_SERVER_NAME: ${MATRIX_SERVER_NAME:-localhost}
@@ -112,11 +112,11 @@ services:
     entrypoint: ["node", "/app/deploy/bootstrap/bootstrap.mjs"]
     restart: "no"
     profiles:
-      - bundled
+      - matrix-included
     environment:
       HOMESERVER_URL: http://homeserver:8008
       HOMESERVER_PUBLIC_URL: ${HOMESERVER_PUBLIC_URL:-http://localhost:8008}
-      REGISTRATION_TOKEN: ${REGISTRATION_TOKEN:-}
+      REGISTRATION_TOKEN: ${REGISTRATION_TOKEN:-alveole-local-registration}
       ALVEOLE_BOT_USER: ${ALVEOLE_BOT_USER:-alveole}
       ALVEOLE_USER_NAME: ${ALVEOLE_USER_NAME:-user}
       ALVEOLE_ROOM_NAME: ${ALVEOLE_ROOM_NAME:-Alvéole}

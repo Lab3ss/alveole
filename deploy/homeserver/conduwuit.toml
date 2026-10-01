@@ -1,4 +1,4 @@
-# Continuwuity (conduwuit's maintained successor) — bundled-mode homeserver.
+# Continuwuity (conduwuit's maintained successor) — matrix-included homeserver.
 # Mounted read-only at /etc/continuwuity/conduwuit.toml (see
 # deploy/docker-compose.yml); deployment-specific values (server_name,
 # registration token) are overridden by CONTINUWUITY_* env vars set in compose
@@ -23,7 +23,7 @@ database_path = "/var/lib/continuwuity"
 # Registration requires a registration token (UIAA m.login.registration_token).
 # The token is injected via CONTINUWUITY_REGISTRATION_TOKEN — open registration
 # would additionally require a special compile-time feature flag, so a token is
-# the only sane path (and 8008 is loopback-bound anyway). Both bundled accounts
+# the only sane path (and 8008 is loopback-bound anyway). Both included accounts
 # (bot + human) are created by deploy/bootstrap with this token.
 allow_registration = true
 force_disable_first_run_mode = true

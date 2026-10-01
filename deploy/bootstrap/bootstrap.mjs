@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
- * One-shot bootstrap for the bundled docker-compose deployment (profile
- * "bundled"). Runs on the broker image against the bundled continuuwuity
- * homeserver and prepares everything the broker needs:
+ * One-shot bootstrap for the matrix-included docker-compose deployment
+ * (COMPOSE_PROFILES=matrix-included). Runs on the broker image against the
+ * included continuuwuity homeserver and prepares everything the broker needs:
  *
  *   1. waits for the homeserver (GET /_matrix/client/versions, 2s retry, 120s);
  *   2. creates two accounts through the client /register UIAA flow with the
@@ -51,11 +51,13 @@ if (existsSync(ACCOUNT_FILE)) {
   process.exit(0);
 }
 
-// Fail fast: the bundled homeserver treats an empty CONTINUWUITY_REGISTRATION_TOKEN
+// Fail fast: the included homeserver treats an empty CONTINUWUITY_REGISTRATION_TOKEN
 // as "directive specified but empty" and refuses to start, so every downstream
 // wait would burn its full timeout before failing with an unrelated message.
+// The compose stack always supplies one (default or REGISTRATION_TOKEN from
+// .env), so this only bites a hand-run bootstrap with no token.
 if (!REGISTRATION_TOKEN) {
-  fail(`REGISTRATION_TOKEN is empty — the bundled homeserver refuses to start without it. Set it in .env (generate one: openssl rand -hex 12), then recreate the stack (docker compose up -d)`);
+  fail(`REGISTRATION_TOKEN is empty — the included homeserver needs one. The compose stack supplies a default; set REGISTRATION_TOKEN in .env only for a custom one (openssl rand -hex 12).`);
 }
 
 const api = async (method, path, body, token) => {

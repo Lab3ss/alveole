@@ -59,8 +59,6 @@ Copy `.env.example` to `.env` and set:
 - `OPENROUTER_API_KEY` — your [OpenRouter](https://openrouter.ai) key: the
   single LLM credential; every room's agent bills its model calls through
   it;
-- `REGISTRATION_TOKEN` — generate one with `openssl rand -hex 12`: the
-  bundled homeserver only accepts token registrations, and the bootstrap uses this one token to create both accounts (the bot's, then yours);
 
 > ⚠️ to work from a phone or another device, this device must be able to reach
 > `HOMESERVER_PUBLIC_URL=http://<server-LAN-ip>:8008` and `MATRIX_SERVER_NAME=<server-LAN-ip>`
@@ -83,9 +81,9 @@ Copy `.env.example` to `.env` and set:
 - `MATRIX_TOKEN` — an access token for the bot's account, a dedicated user
   on that homeserver that the broker signs in as (most clients can print
   one — in Element: Settings → Help & About → Access Token);
-- `COMPOSE_PROFILES=""` — compose profiles decide which services come up;
-  emptying it leaves out the bundled homeserver, Element Web, and the
-  bootstrap: only the broker runs, against your homeserver.
+- comment out the `COMPOSE_PROFILES` line in `.env` — it decides which
+  services come up; removing it leaves out the included homeserver, Element
+  Web, and the bootstrap: only the broker runs, against your homeserver.
 
 One constraint to know upfront: the bot cannot decrypt encrypted rooms, so
 onboard it in unencrypted ones (see [Security](#security)).
@@ -113,7 +111,7 @@ docker compose -f deploy/docker-compose.yml --env-file .env up -d
 
 The stack is up; step into the room.
 
-- Matrix bundled mode: `docker compose -f deploy/docker-compose.yml --env-file .env logs bootstrap`
+- Matrix-included mode: `docker compose -f deploy/docker-compose.yml --env-file .env logs bootstrap`
   prints a credentials block — the Element Web URL (port 8080 of the
   server) and the username/password the bootstrap generated for you. Open
   Element, sign in, and the room is already there, with the bot waiting.
@@ -131,7 +129,7 @@ tasks in plain language.
 Notes:
 
 - `docker compose down` stops the compose services (broker, plus
-  homeserver/Element in bundled mode) but leaves live room runners alone
+  homeserver/Element in matrix-included mode) but leaves live room runners alone
   (they're runtime containers, not compose services); the broker re-attaches
   to their networks lazily on its next message.
 - **Security**: mounting `/var/run/docker.sock` into the broker gives it
