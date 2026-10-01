@@ -21,7 +21,7 @@ test("newRoom starts onboarding at the repo step and persists", () => {
 
 test("saveRoom persists the full row (what a broker restart relies on)", () => {
   const r = getRoom("!r1:example.org")!;
-  r.repo = "lab3ss/coding-agent";
+  r.repo = "lab3ss/alveole";
   r.token = "ghp_testtoken123456";
   r.model = "anthropic/claude-sonnet-4.5";
   r.podName = "room-dev-abc";
@@ -33,7 +33,7 @@ test("saveRoom persists the full row (what a broker restart relies on)", () => {
   const db = new DatabaseSync(dbPath);
   const row: any = db.prepare(`SELECT * FROM rooms WHERE room_id = ?`).get("!r1:example.org");
   db.close();
-  assert.equal(row.repo, "lab3ss/coding-agent");
+  assert.equal(row.repo, "lab3ss/alveole");
   assert.equal(row.token, "ghp_testtoken123456");
   assert.equal(row.model, "anthropic/claude-sonnet-4.5");
   assert.equal(row.pod_name, "room-dev-abc");
