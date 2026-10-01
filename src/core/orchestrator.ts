@@ -29,7 +29,7 @@ const COST_ALERT_STEP_USD = 5;
 /** Namespace shown in the /connect hint's kubectl command. Mirrors the k8s
  * driver's ROOMS_NAMESPACE default (src/k8s.ts); the core must not import that
  * driver, so the env is read directly here. */
-const ROOMS_NAMESPACE = process.env.ROOMS_NAMESPACE ?? "coding-agent-rooms";
+const ROOMS_NAMESPACE = process.env.ROOMS_NAMESPACE ?? "alveole-rooms";
 
 /** The onboarding opener — sent proactively on join (see greet) and re-sent
  * when a room still at the repo step sends something that isn't a repo. */

@@ -160,10 +160,10 @@ Requirements, in plain terms:
 Two images, both `linux/amd64` — pull them from ghcr, or build them from
 this repo:
 
-- `ghcr.io/lab3ss/coding-agent` — the broker, the always-on core: it signs
+- `ghcr.io/lab3ss/alveole` — the broker, the always-on core: it signs
   into Matrix, listens in rooms, and provisions each room's workspace
   (built from this repo's `Dockerfile`).
-- `ghcr.io/lab3ss/coding-agent-runner` — the runner, what each room's pod
+- `ghcr.io/lab3ss/alveole-runner` — the runner, what each room's pod
   actually runs: a disposable, isolated workspace with the agent inside
   (built from `runner/Dockerfile`).
 
@@ -177,7 +177,7 @@ hard it may push (the guardrails):
 | `MATRIX_HOMESERVER`, `MATRIX_TOKEN` | the bot's Matrix account |
 | `OPENROUTER_API_KEY` | the only LLM credential, copied into every room's pod |
 | `WORKSPACE_BACKEND` | which infra driver provisions per-room workspaces: `k8s` or `compose`. The shipped `.env.example` sets `compose`; the code default is `k8s` |
-| `ROOMS_NAMESPACE` | where per-room pods live; default `coding-agent-rooms` |
+| `ROOMS_NAMESPACE` | where per-room pods live; default `alveole-rooms` |
 | `RUNNER_IMAGE` | runner image tag; default `ghcr.io/lab3ss/alveole-runner:0.3.0` |
 | `IDLE_TEARDOWN_HOURS` | idle threshold before auto-teardown; default `24` |
 | `TURN_WATCHDOG_MINUTES` | abort a turn with no agent activity this long (approval waits exempt); default `15`, `0` disables |
