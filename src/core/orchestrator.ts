@@ -360,7 +360,13 @@ const make = (config: OrchestratorConfig) =>
      */
     /** Everything ensureProvisioned can fail with — callers switch on these codes. */
     type ProvisionError = Failure<
-      "pod-read-failed" | "provision-failed" | "pod-wait-failed" | "session-create-failed" | "secret-read-failed" | "watch-failed"
+      | "pod-read-failed"
+      | "provision-failed"
+      | "pod-wait-failed"
+      | "session-create-failed"
+      | "runner-version-mismatch"
+      | "secret-read-failed"
+      | "watch-failed"
     >;
 
     const ensureProvisioned = (room: Room): Effect.Effect<void, ProvisionError> =>
