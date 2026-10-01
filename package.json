@@ -9,7 +9,7 @@
     "node": ">=22.18"
   },
   "scripts": {
-    "broker": "node src/broker.ts",
+    "broker": "node --env-file-if-exists=.env src/broker.ts",
     "check": "tsc --noEmit",
     "test": "node --test test/*.test.ts"
   },

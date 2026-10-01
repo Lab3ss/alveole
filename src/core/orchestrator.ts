@@ -702,7 +702,12 @@ const make = (config: OrchestratorConfig) =>
           if (!repo) {
             yield* send(roomId, {
               type: "info",
-              text: "What repo should I work on? Reply with `owner/name` or a GitHub URL.",
+              text:
+                "Welcome! Let's get this workspace set up in three quick steps:\n\n" +
+                "1. Send the repo I should work on — `owner/name` or a GitHub URL.\n" +
+                "2. Send a GitHub PAT scoped to that repo — it stays only inside this room's isolated workspace.\n" +
+                "3. Pick an Openrouter model.\n\n" +
+                "Let's start with step 1: what repo should I work on?",
             });
             return;
           }
@@ -711,7 +716,7 @@ const make = (config: OrchestratorConfig) =>
           registry.save(room);
           yield* send(roomId, {
             type: "info",
-            text: `Got it: ${repo}. Now send a GitHub PAT scoped to that repo — it's used only inside this conversation's isolated workspace, never shared with any other room.`,
+            text: `Got it: ${repo}. Now send a GitHub PAT scoped to that repo — it's used only inside this conversation's isolated workspace.`,
           });
           return;
         }
