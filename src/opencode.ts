@@ -1,8 +1,8 @@
 /**
  * HTTP client for one room's `opencode serve` instance (see runner/entrypoint.sh).
  * Basic-auth protected with a per-room random password (see src/k8s.ts) so
- * nothing else in the coding-agent-rooms namespace can reach another room's
- * server even over the cluster network.
+ * nothing else in the room namespace can reach another room's server even over
+ * the cluster network.
  */
 import { Agent, fetch as undiciFetch } from "undici";
 import { describeError } from "./util.ts";

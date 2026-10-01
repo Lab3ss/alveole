@@ -202,14 +202,14 @@ const reset = () => {
 /** Full onboarding flow for one conversation — needed because reset() clears
  * the fake registry; every test must set up its own room. */
 const onboard = async (id = "!t1", runner: (m: InboundMessage) => Promise<void> = run) => {
-  await runner({ conversationId: id, text: "lab3ss/coding-agent" });
+  await runner({ conversationId: id, text: "lab3ss/alveole" });
   await runner({ conversationId: id, text: "ghp_token1234567", messageId: "$m1" });
   await runner({ conversationId: id, text: "anthropic/claude-sonnet-4.5" });
 };
 
 test("onboarding collects repo → token → model, then provisions the workspace", async () => {
   reset();
-  await run({ conversationId: "!t1", text: "lab3ss/coding-agent" });
+  await run({ conversationId: "!t1", text: "lab3ss/alveole" });
   assert.equal(rooms.get("!t1")?.onboarding, "token");
   assert.ok(recorded.some((r) => r.event.type === "info" && r.event.text.includes("GitHub PAT")));
 
@@ -421,7 +421,7 @@ test("broken input during onboarding re-asks instead of provisioning", async () 
 
 test("onboarding provision failure surfaces the typed code in the room", async () => {
   reset();
-  await run({ conversationId: "!t8", text: "lab3ss/coding-agent" });
+  await run({ conversationId: "!t8", text: "lab3ss/alveole" });
   await run({ conversationId: "!t8", text: "ghp_token1234567", messageId: "$m1" });
   failures.provision = { code: "provision-failed", details: "boom" };
   await run({ conversationId: "!t8", text: "anthropic/claude-sonnet-4.5" });

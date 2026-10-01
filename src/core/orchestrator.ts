@@ -26,6 +26,11 @@ import { Workspace, type Failure } from "./workspace.ts";
 
 const COST_ALERT_STEP_USD = 5;
 
+/** Namespace shown in the /connect hint's kubectl command. Mirrors the k8s
+ * driver's ROOMS_NAMESPACE default (src/k8s.ts); the core must not import that
+ * driver, so the env is read directly here. */
+const ROOMS_NAMESPACE = process.env.ROOMS_NAMESPACE ?? "coding-agent-rooms";
+
 /** The onboarding opener — sent proactively on join (see greet) and re-sent
  * when a room still at the repo step sends something that isn't a repo. */
 const REPO_PROMPT =
@@ -655,7 +660,7 @@ const make = (config: OrchestratorConfig) =>
               type: "info",
               text:
                 "VPN/cluster access only — this never leaves the private network. From a machine with " +
-                `kubectl access:\n\nkubectl port-forward -n coding-agent-rooms svc/${room.podName} 4096:4096\n` +
+                `kubectl access:\n\nkubectl port-forward -n ${ROOMS_NAMESPACE} svc/${room.podName} 4096:4096\n` +
                 `opencode attach http://localhost:4096 -p ${password}\n\n` +
                 "Keep the port-forward running in one terminal, attach in another. Works alongside chatting " +
                 "here — alternate freely, same session either way.",

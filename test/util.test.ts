@@ -3,17 +3,17 @@ import assert from "node:assert/strict";
 import { parseRepo, describeError, formatUsage, splitForMatrix } from "../src/util.ts";
 
 test("parseRepo accepts owner/name", () => {
-  assert.equal(parseRepo("lab3ss/coding-agent"), "lab3ss/coding-agent");
+  assert.equal(parseRepo("lab3ss/alveole"), "lab3ss/alveole");
   assert.equal(parseRepo("  Lab3ss/K8s-GitOps "), "Lab3ss/K8s-GitOps");
 });
 
 test("parseRepo accepts GitHub URLs and normalizes to owner/name", () => {
-  assert.equal(parseRepo("https://github.com/lab3ss/coding-agent"), "lab3ss/coding-agent");
-  assert.equal(parseRepo("https://github.com/lab3ss/coding-agent.git"), "lab3ss/coding-agent");
-  assert.equal(parseRepo("git@github.com:lab3ss/coding-agent.git"), "lab3ss/coding-agent");
-  assert.equal(parseRepo("clone https://github.com/lab3ss/coding-agent/tree/main please"), "lab3ss/coding-agent");
-  assert.equal(parseRepo("work on https://github.com/lab3ss/coding-agent."), "lab3ss/coding-agent");
-  assert.equal(parseRepo("(see https://github.com/lab3ss/coding-agent)"), "lab3ss/coding-agent");
+  assert.equal(parseRepo("https://github.com/lab3ss/alveole"), "lab3ss/alveole");
+  assert.equal(parseRepo("https://github.com/lab3ss/alveole.git"), "lab3ss/alveole");
+  assert.equal(parseRepo("git@github.com:lab3ss/alveole.git"), "lab3ss/alveole");
+  assert.equal(parseRepo("clone https://github.com/lab3ss/alveole/tree/main please"), "lab3ss/alveole");
+  assert.equal(parseRepo("work on https://github.com/lab3ss/alveole."), "lab3ss/alveole");
+  assert.equal(parseRepo("(see https://github.com/lab3ss/alveole)"), "lab3ss/alveole");
 });
 
 test("parseRepo rejects non-repo text", () => {

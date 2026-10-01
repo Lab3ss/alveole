@@ -1,6 +1,6 @@
 /**
  * Provisions/tears down the per-room runner Pod+Secret+Service in the
- * `coding-agent-rooms` namespace. The broker's own ServiceAccount is scoped
+ * per-room namespace (ROOMS_NAMESPACE). The broker's own ServiceAccount is scoped
  * (via a namespaced Role/RoleBinding, see apps/coding-agent/role.yaml in the
  * gitops repo) to create/get/list/delete exactly these three kinds, only in
  * that one namespace — it has no access to its own namespace or anywhere else.
