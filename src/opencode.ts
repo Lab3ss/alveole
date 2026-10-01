@@ -55,12 +55,49 @@ async function req<T>(baseUrl: string, password: string, path: string, init?: Re
     res = await attempt();
   }
   if (!res.ok) throw new Error(`opencode ${path} -> ${res.status} ${await res.text().catch(() => "")}`);
-  return res.status === 204 ? (undefined as T) : ((await res.json()) as T);
+  if (res.status === 204) return undefined as T;
+  const contentType = res.headers.get("content-type") ?? "";
+  if (!contentType.includes("application/json")) {
+    // A wrong/unknown path doesn't 404 here — it falls through to the web UI's
+    // SPA fallback, which answers 200 text/html. res.json() would then die on
+    // "<!doctype html>" as a misleading "Unexpected token '<' … is not valid
+    // JSON", hiding the real cause (route drift, wrong runner version). Name it.
+    const body = await res.text().catch(() => "");
+    throw new Error(
+      `opencode ${path} -> ${res.status} expected JSON but got ${contentType || "no content-type"}${body ? `: ${body.slice(0, 120)}` : ""}`,
+    );
+  }
+  return (await res.json()) as T;
 }
 
 export async function createSession(baseUrl: string, password: string, signal?: AbortSignal): Promise<string> {
   const session = await req<{ id: string }>(baseUrl, password, "/session", { method: "POST", body: "{}", signal });
   return session.id;
+}
+
+/**
+ * The one opencode version this client's HTTP contract is written against.
+ *
+ * opencode's HTTP surface is not a stability guarantee: route paths and event
+ * names move between versions (the question-reply route was session-scoped in
+ * some builds and top-level in 1.18.32; `question.asked` vs `question.v2.asked`
+ * coexist), and a mismatched runner fails SILENTLY and confusingly — e.g. an
+ * unknown path falls through to the web UI's SPA fallback, answering 200
+ * text/html that later dies as "Unexpected token '<' … is not valid JSON".
+ *
+ * So this constant is the contract's single source of truth, and the broker
+ * refuses to use a runner that reports a different version (see
+ * Workspace.assertRunnerVersion). It MUST stay equal to runner/Dockerfile's
+ * ARG OPENCODE_VERSION — test/runner-version.test.ts fails if they drift.
+ */
+export const EXPECTED_OPENCODE_VERSION = "1.18.32";
+
+/** Reads `GET /global/health` — `{ healthy, version }` — the runner's self-reported
+ * opencode version. "unknown" when the server omits it, which never matches
+ * EXPECTED_OPENCODE_VERSION (an old/foreign server is not a supported one). */
+export async function getServerVersion(baseUrl: string, password: string): Promise<string> {
+  const info = await req<{ version?: unknown }>(baseUrl, password, "/global/health");
+  return typeof info?.version === "string" ? info.version : "unknown";
 }
 
 /**
@@ -221,6 +258,14 @@ export async function respondPermission(
  * against the pod's opencode 1.18.32 binary (no public docs): `answers` is
  * one array-of-labels per question, in question order — a question allowing
  * multiple selections gets more than one label in its array.
+ *
+ * NOTE: unlike permissions, the v1 question-reply route is NOT session-scoped
+ * — it's the top-level `/question/:requestID/reply` (see the instance httpapi
+ * "question" group in opencode 1.18.32). Posting to the old session-scoped
+ * path fell through to the web UI's SPA fallback, which answers `200 text/html`,
+ * so req() passed the res.ok check and then died parsing `<!doctype html>` as
+ * JSON ("Unexpected token '<' … is not valid JSON"). The sessionId is kept in
+ * the signature for callers/logging but is not part of the URL.
  */
 export async function answerQuestion(
   baseUrl: string,
@@ -229,7 +274,8 @@ export async function answerQuestion(
   requestId: string,
   answers: string[][],
 ): Promise<void> {
-  await req(baseUrl, password, `/session/${sessionId}/question/${requestId}/reply`, {
+  void sessionId;
+  await req(baseUrl, password, `/question/${requestId}/reply`, {
     method: "POST",
     body: JSON.stringify({ answers }),
   });

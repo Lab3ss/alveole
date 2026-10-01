@@ -39,6 +39,7 @@ export type WorkspaceError =
   | "usage-fetch-failed" // GET /session/:id failed
   | "permission-respond-failed" // POSTing an approval decision failed
   | "question-respond-failed" // POSTing a question answer failed
+  | "runner-version-mismatch" // the runner's opencode version != the one this client's contract targets
   | "watch-failed"; // SSE event stream couldn't be opened
 
 /** A workspace failure: the stable `code` (for callers to switch on) plus
@@ -75,7 +76,10 @@ export interface WorkspaceService {
   /** Reads the room's opencode server password from its live Secret. */
   readonly serverPassword: (resourceName: string) => Effect.Effect<string, Failure<"secret-read-failed">>;
   /** Creates the opencode session, retrying until the HTTP server is listening. */
-  readonly createSession: (baseUrl: string, password: string) => Effect.Effect<string, Failure<"session-create-failed">>;
+  readonly createSession: (
+    baseUrl: string,
+    password: string,
+  ) => Effect.Effect<string, Failure<"session-create-failed" | "runner-version-mismatch">>;
   /** Bounded connectivity probe, retried — fails fast on a wedged connection. */
   readonly probe: (baseUrl: string, password: string) => Effect.Effect<void, Failure<"probe-failed">>;
   readonly sendPrompt: (
@@ -161,6 +165,26 @@ const failing = <A, E extends WorkspaceError>(code: E, run: () => Promise<A>): E
   });
 
 /**
+ * Refuses a runner whose opencode version differs from the one this broker's
+ * HTTP client was written against (EXPECTED_OPENCODE_VERSION). Which version a
+ * room actually runs is chosen per-deployment by RUNNER_IMAGE (and defaults
+ * differ by backend: k8s pulls a published ghcr tag, compose builds a local
+ * tag), so without this the interface contract could silently drift between
+ * deployments — and a moved route/event does not error, it falls through to
+ * the web UI (200 text/html) or is simply never seen. Checked once per session
+ * create (provision/recovery only, not per message), so the cost is one GET.
+ */
+const assertRunnerVersion = (baseUrl: string, password: string): Effect.Effect<void, Failure<"runner-version-mismatch">> =>
+  failing("runner-version-mismatch", async () => {
+    const actual = await opencode.getServerVersion(baseUrl, password);
+    if (actual !== opencode.EXPECTED_OPENCODE_VERSION) {
+      throw new Error(
+        `runner runs opencode ${actual}, broker expects ${opencode.EXPECTED_OPENCODE_VERSION} — the HTTP contract can differ between versions; set RUNNER_IMAGE to a tag built with opencode ${opencode.EXPECTED_OPENCODE_VERSION}`,
+      );
+    }
+  });
+
+/**
  * The HTTP-only methods shared by both drivers: createSession/probe/sendPrompt/
  * watch/... only ever speak to the room's opencode server over HTTP, so they
  * are byte-for-byte identical whether the room is a k8s pod or a compose
@@ -169,16 +193,19 @@ const failing = <A, E extends WorkspaceError>(code: E, run: () => Promise<A>): E
  */
 const httpMethods = () => ({
   createSession: (baseUrl: string, password: string) =>
-    failing("session-create-failed", () =>
-      // 90 × 2s ≈ 3 min: the container is "Running" while entrypoint.sh is
-      // still cloning the repo — serve only exec's AFTER the clone, and a
-      // slow one easily outlives the previous 10×2s budget, surfacing as
-      // session-create-failed/ECONNREFUSED on a pod that was fine.
-      retryUntilReady(
-        () => opencode.createSession(baseUrl, password, AbortSignal.timeout(10_000)),
-        90,
-        2000,
+    Effect.flatMap(
+      failing("session-create-failed", () =>
+        // 90 × 2s ≈ 3 min: the container is "Running" while entrypoint.sh is
+        // still cloning the repo — serve only exec's AFTER the clone, and a
+        // slow one easily outlives the previous 10×2s budget, surfacing as
+        // session-create-failed/ECONNREFUSED on a pod that was fine.
+        retryUntilReady(
+          () => opencode.createSession(baseUrl, password, AbortSignal.timeout(10_000)),
+          90,
+          2000,
+        ),
       ),
+      (id) => Effect.as(assertRunnerVersion(baseUrl, password), id),
     ),
   probe: (baseUrl: string, password: string) => failing("probe-failed", () => retryUntilReady(() => opencode.probeConnection(baseUrl, password))),
   sendPrompt: (baseUrl: string, password: string, sessionId: string, text: string, model: string | undefined, onDone: (err: string | undefined) => void) =>
@@ -273,16 +300,19 @@ const makeComposeWorkspace = (config: { openrouterKey: string }): WorkspaceServi
     // Identical to the shared one, except a connection-refused-shaped failure
     // gets one lazy re-attach + a second retry budget before surfacing.
     createSession: (baseUrl, password) =>
-      failing("session-create-failed", async () => {
-        try {
-          return await retryUntilReady(() => opencode.createSession(baseUrl, password, AbortSignal.timeout(10_000)), 90, 2000);
-        } catch (err) {
-          if (!isConnectionError(err)) throw err;
-          console.warn(`[workspace] createSession to ${baseUrl} failed on a connection error — re-attaching broker to the room network and retrying`);
-          await docker.ensureBrokerConnected(roomNameFromUrl(baseUrl));
-          return await retryUntilReady(() => opencode.createSession(baseUrl, password, AbortSignal.timeout(10_000)), 90, 2000);
-        }
-      }),
+      Effect.flatMap(
+        failing("session-create-failed", async () => {
+          try {
+            return await retryUntilReady(() => opencode.createSession(baseUrl, password, AbortSignal.timeout(10_000)), 90, 2000);
+          } catch (err) {
+            if (!isConnectionError(err)) throw err;
+            console.warn(`[workspace] createSession to ${baseUrl} failed on a connection error — re-attaching broker to the room network and retrying`);
+            await docker.ensureBrokerConnected(roomNameFromUrl(baseUrl));
+            return await retryUntilReady(() => opencode.createSession(baseUrl, password, AbortSignal.timeout(10_000)), 90, 2000);
+          }
+        }),
+        (id) => Effect.as(assertRunnerVersion(baseUrl, password), id),
+      ),
   };
 };
 
