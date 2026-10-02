@@ -4,6 +4,8 @@ Your coding agent lives in an isolated, ephemeral filesystem — one for each
 of your projects. Self-host the open-source stack, then work and collaborate
 from anywhere, in any Matrix client.
 
+![Alvéole illustration](assets/illustration.png)
+
 ## Motivation
 
 - 🔒 **Compartmentalized by design** — every room is an isolated, disposable
@@ -11,7 +13,7 @@ from anywhere, in any Matrix client.
 - 🛡️ **Sovereign** — self-hosted on your own infrastructure, any OpenRouter
   model. No closed SaaS, no vendor pricing, no lock-in. Your keys, your data,
   your rules.
-- 🗂️ **One channel, one project, one filesystem** — as many parallel agents
+- 🗂️ **One channel, one filesystem, on security boundary** — as many parallel agents
   as you have repos or even tasks, each sealed in its own room, all served by one
   always-on broker.
 - 👥 **Collaboration built-in** — the session lives in a chat room: invite a
