@@ -2,25 +2,34 @@
 /**
  * One-shot bootstrap for the matrix-included docker-compose deployment
  * (COMPOSE_PROFILES=matrix-included). Runs on the broker image against the
- * included continuuwuity homeserver and prepares everything the broker needs:
+ * included continuuwuity homeserver and prepares everything the broker needs.
+ *
+ * It RECONCILES the homeserver with /data/bot-account.json instead of trusting
+ * the file's existence. Every run:
  *
  *   1. waits for the homeserver (GET /_matrix/client/versions, 2s retry, 120s);
- *   2. creates two accounts through the client /register UIAA flow with the
- *      configured REGISTRATION_TOKEN (m.login.registration_token — the only
- *      registration path continuuwuity allows on stock images): the bot
- *      (ALVEOLE_BOT_USER, default "alveole") and the human (ALVEOLE_USER_NAME,
- *      default "user"), both with generated hex passwords;
- *   3. logs the bot in (m.login.password) for its access token;
- *   4. creates the shared room as the bot (private_chat, human invited, NOT
- *      encrypted — the broker has no E2EE);
- *   5. writes /data/bot-account.json (0600) for the broker to pick up
- *      (src/broker.ts) and prints the human-facing credentials block that
+ *   2. loads the previous account file (a cache: bot/human user ids, passwords,
+ *      room id), if any;
+ *   3. ensures the bot account exists — reuses the stored access token when it
+ *      still answers whoami, else logs in with the stored bot password, else
+ *      registers (creating a password only when registering);
+ *   4. ensures the human account exists the same way (login with the stored
+ *      password, else register) so the human's password survives a homeserver
+ *      reset instead of being rotated every run;
+ *   5. reuses the stored room when the bot is still joined to it, else creates
+ *      the shared room (private_chat, human invited, NOT encrypted — the broker
+ *      has no E2EE);
+ *   6. atomically rewrites /data/bot-account.json (0600) for the broker to pick
+ *      up (src/broker.ts) and prints the human-facing credentials block that
  *      `docker compose logs bootstrap` shows.
  *
- * Idempotent: if /data/bot-account.json already exists it just re-prints the
- * summary and exits 0. Only node built-ins (node 22, global fetch).
+ * This makes restarts idempotent AND self-healing: if the homeserver data was
+ * reset while /data survived, the stale file is detected (whoami/login fail),
+ * the accounts and room are recreated, and the file is rewritten — no wipe, no
+ * duplicate room. The recovery is keyed on the homeserver's reality, never on
+ * fs.existsSync. Only node built-ins (node 22, global fetch).
  */
-import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 
 const ACCOUNT_FILE = process.env.BOT_ACCOUNT_FILE ?? "/data/bot-account.json";
@@ -41,24 +50,13 @@ const printSummary = (acct) => {
   console.log(`\n${line}\n  Alvéole is ready.\n\n  Element Web:  http://localhost:8080 (or http://<this-host-LAN-ip>:8080 from your phone)\n  Homeserver:   ${HOMESERVER_PUBLIC_URL}\n  Sign in as:   ${acct.humanUserId}\n  Password:     ${acct.humanPassword}\n  Room:         ${ROOM_NAME} — the bot (@${BOT_USER}) is waiting there\n\n  Say hi in the room, send it a repo, and it will ask for a\n  GitHub PAT scoped to that repo — paste it when it asks.\n${line}\n`);
 };
 
-if (existsSync(ACCOUNT_FILE)) {
-  console.log("[bootstrap] /data/bot-account.json already present — nothing to do");
+const loadPrev = () => {
   try {
-    printSummary(JSON.parse(readFileSync(ACCOUNT_FILE, "utf8")));
+    return JSON.parse(readFileSync(ACCOUNT_FILE, "utf8"));
   } catch {
-    // keep the idempotent exit 0 even if the file can't be re-printed
+    return undefined; // absent, partial, or corrupt — treat as a fresh run
   }
-  process.exit(0);
-}
-
-// Fail fast: the included homeserver treats an empty CONTINUWUITY_REGISTRATION_TOKEN
-// as "directive specified but empty" and refuses to start, so every downstream
-// wait would burn its full timeout before failing with an unrelated message.
-// The compose stack always supplies one (default or REGISTRATION_TOKEN from
-// .env), so this only bites a hand-run bootstrap with no token.
-if (!REGISTRATION_TOKEN) {
-  fail(`REGISTRATION_TOKEN is empty — the included homeserver needs one. The compose stack supplies a default; set REGISTRATION_TOKEN in .env only for a custom one (openssl rand -hex 12).`);
-}
+};
 
 const api = async (method, path, body, token) => {
   const res = await fetch(HOMESERVER_URL + "/_matrix/client" + path, {
@@ -86,7 +84,7 @@ for (let deadline = Date.now() + 120_000; Date.now() < deadline; ) {
   } catch {
     // not listening yet
   }
-  await new Promise((r) => setTimeout(r, 2000));
+  await new Promise((r) => setTimeout(r, 2_000));
 }
 if (!up) fail(`homeserver at ${HOMESERVER_URL} did not answer /_matrix/client/versions within 120s (check the homeserver container's logs)`);
 
@@ -94,8 +92,7 @@ if (!up) fail(`homeserver at ${HOMESERVER_URL} did not answer /_matrix/client/ve
 // with an auth matching one of the server's advertised stages completes it.
 // Registration token is the preferred (and, on stock continuuwuity images,
 // the only) path; open registration via m.login.dummy is attempted when the
-// server offers it — acceptable per the threat model since 8008 is never
-// published. Conduwuity requires initial_device_display_name on register.
+// server offers it. Conduwuity requires initial_device_display_name on register.
 const register = async (username, password) => {
   const body = { username, password, initial_device_display_name: "alveole bootstrap", inhibit_login: true };
   let res = await api("POST", "/v3/register", body);
@@ -117,45 +114,102 @@ const register = async (username, password) => {
   return res.data.user_id;
 };
 
-const login = async (userId, password, device) => {
+/** Login and return the access token, or undefined when the credentials don't work. */
+const tryLogin = async (userId, password, device) => {
   const res = await api("POST", "/v3/login", {
     type: "m.login.password",
     identifier: { type: "m.id.user", user: userId },
     password,
     initial_device_display_name: device,
   });
-  if (!res.ok) throw new Error(`login for ${userId} failed: ${res.status} ${JSON.stringify(res.data)}`);
-  return res.data.access_token;
+  return res.ok ? res.data.access_token : undefined;
 };
 
-const botPassword = randomBytes(24).toString("hex");
-const humanPassword = randomBytes(24).toString("hex");
+/** Does this access token still belong to a live session on the homeserver? */
+const tokenIsLive = async (token) => {
+  try {
+    const res = await api("GET", "/v3/account/whoami", undefined, token);
+    return res.ok;
+  } catch {
+    return false;
+  }
+};
 
-let botUserId;
-let humanUserId;
+const joinedRoomIds = async (token) => {
+  const res = await api("GET", "/v3/joined_rooms", undefined, token);
+  return res.ok && Array.isArray(res.data.joined_rooms) ? res.data.joined_rooms : [];
+};
+
+const newPassword = () => randomBytes(24).toString("hex");
+
+const prev = loadPrev();
+
+let botUserId = prev?.botUserId;
+let botPassword = prev?.botPassword;
+let botAccessToken = prev?.botAccessToken;
+let humanUserId = prev?.humanUserId;
+let humanPassword = prev?.humanPassword;
+let roomId = prev?.roomId;
+let botReused = false;
+
 try {
-  botUserId = await register(BOT_USER, botPassword);
-  humanUserId = await register(HUMAN_USER, humanPassword);
+  // --- bot account ---------------------------------------------------------
+  // Prefer the stored token (cheap, no new device); fall back to the stored
+  // password; only register when the account is genuinely gone. This is what
+  // detects the "file survived, homeserver was reset" case: whoami 401s, login
+  // 403s, and we recreate the account instead of handing the broker a dead token.
+  if (botUserId && botAccessToken && (await tokenIsLive(botAccessToken))) {
+    botReused = true;
+  } else {
+    let token = botUserId && botPassword ? await tryLogin(botUserId, botPassword, "alveole-broker") : undefined;
+    if (!token) {
+      botPassword = botPassword ?? newPassword();
+      botUserId = await register(BOT_USER, botPassword);
+      token = await tryLogin(botUserId, botPassword, "alveole-broker");
+      if (!token) throw new Error(`could not log the bot in after registering @${BOT_USER}`);
+    }
+    botAccessToken = token;
+  }
+
+  // --- human account -------------------------------------------------------
+  // Reuse the stored password whenever the account still exists so the human's
+  // sign-in survives restarts and homeserver resets alike. Only generate a new
+  // password when we actually have to register a fresh account.
+  if (!(humanUserId && humanPassword && botReused)) {
+    humanPassword = humanPassword ?? newPassword();
+    const token = humanUserId ? await tryLogin(humanUserId, humanPassword, "alveole-human") : undefined;
+    if (!token) humanUserId = await register(HUMAN_USER, humanPassword);
+  }
+
+  // --- shared room ---------------------------------------------------------
+  // Reuse the room only when the bot is still joined to it; otherwise create a
+  // new one. Keeps restarts from spawning a room per `up`.
+  let roomReused = false;
+  if (roomId && (await joinedRoomIds(botAccessToken)).includes(roomId)) {
+    roomReused = true;
+  } else {
+    const roomRes = await api("POST", "/v3/createRoom", { name: ROOM_NAME, invite: [humanUserId], preset: "private_chat" }, botAccessToken);
+    if (!roomRes.ok) throw new Error(`creating the room failed: ${roomRes.status} ${JSON.stringify(roomRes.data)}`);
+    roomId = roomRes.data.room_id;
+  }
+
+  const account = {
+    homeserverUrl: HOMESERVER_URL,
+    botUserId,
+    botAccessToken,
+    botPassword,
+    humanUserId,
+    humanPassword,
+    roomId,
+  };
+  const tmp = `${ACCOUNT_FILE}.tmp`;
+  writeFileSync(tmp, JSON.stringify(account, null, 2) + "\n", { mode: 0o600 });
+  renameSync(tmp, ACCOUNT_FILE); // atomic — the broker polls this file
+
+  console.log(
+    `[bootstrap] ${botReused ? "reconciled" : "recreated"} bot account, ${roomReused ? "reused" : "created"} room ${roomId}; ${ACCOUNT_FILE} written for the broker`,
+  );
+  printSummary(account);
 } catch (err) {
-  fail(`${err.message}\n[bootstrap] hint: if the accounts already exist from a previous run, wipe the homeserver-data volume and delete ${ACCOUNT_FILE} to start over`);
+  fail(`${err.message}\n[bootstrap] hint: if the accounts already exist on the homeserver but ${ACCOUNT_FILE} was lost, restore it (or wipe the homeserver-data volume) and re-run; a mismatched password cannot be recovered through the client API`);
 }
-
-const botAccessToken = await login(botUserId, botPassword, "alveole-broker");
-
-const roomRes = await api("POST", "/v3/createRoom", { name: ROOM_NAME, invite: [humanUserId], preset: "private_chat" }, botAccessToken);
-if (!roomRes.ok) fail(`creating the room failed: ${roomRes.status} ${JSON.stringify(roomRes.data)}`);
-
-const account = {
-  homeserverUrl: HOMESERVER_URL,
-  botUserId,
-  botAccessToken,
-  humanUserId,
-  humanPassword,
-  roomId: roomRes.data.room_id,
-};
-const tmp = `${ACCOUNT_FILE}.tmp`;
-writeFileSync(tmp, JSON.stringify(account, null, 2) + "\n", { mode: 0o600 });
-renameSync(tmp, ACCOUNT_FILE); // atomic — the broker polls this file
-
-console.log(`[bootstrap] bot account + room created; ${ACCOUNT_FILE} written for the broker`);
-printSummary(account);
