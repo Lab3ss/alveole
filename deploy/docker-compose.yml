@@ -117,9 +117,10 @@ services:
       HOMESERVER_URL: http://homeserver:8008
       HOMESERVER_PUBLIC_URL: ${HOMESERVER_PUBLIC_URL:-http://localhost:8008}
       REGISTRATION_TOKEN: ${REGISTRATION_TOKEN:-alveole-local-registration}
-      ALVEOLE_BOT_USER: ${ALVEOLE_BOT_USER:-alveole}
+      ALVEOLE_BOT_USER: ${ALVEOLE_BOT_USER:-coding-agent}
+      ALVEOLE_BOT_DISPLAY_NAME: ${ALVEOLE_BOT_DISPLAY_NAME:-Coding Agent}
       ALVEOLE_USER_NAME: ${ALVEOLE_USER_NAME:-user}
-      ALVEOLE_ROOM_NAME: ${ALVEOLE_ROOM_NAME:-Alvéole}
+      ALVEOLE_ROOM_NAME: ${ALVEOLE_ROOM_NAME:-unicorn-project}
     volumes:
       - data:/data
     networks:
