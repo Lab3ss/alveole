@@ -12,7 +12,9 @@
  *      room id), if any;
  *   3. ensures the bot account exists — reuses the stored access token when it
  *      still answers whoami, else logs in with the stored bot password, else
- *      registers (creating a password only when registering);
+ *      registers (creating a password only when registering), and sets its
+ *      profile display name (ALVEOLE_BOT_DISPLAY_NAME, default "Coding Agent";
+ *      the localpart ALVEOLE_BOT_USER stays a valid Matrix username);
  *   4. ensures the human account exists the same way (login with the stored
  *      password, else register) so the human's password survives a homeserver
  *      reset instead of being rotated every run;
@@ -36,9 +38,10 @@ const ACCOUNT_FILE = process.env.BOT_ACCOUNT_FILE ?? "/data/bot-account.json";
 const HOMESERVER_URL = (process.env.HOMESERVER_URL ?? "http://homeserver:8008").replace(/\/+$/, "");
 const HOMESERVER_PUBLIC_URL = process.env.HOMESERVER_PUBLIC_URL ?? "http://localhost:8008";
 const REGISTRATION_TOKEN = process.env.REGISTRATION_TOKEN ?? "";
-const BOT_USER = process.env.ALVEOLE_BOT_USER ?? "alveole";
+const BOT_USER = process.env.ALVEOLE_BOT_USER ?? "coding-agent";
+const BOT_DISPLAY_NAME = process.env.ALVEOLE_BOT_DISPLAY_NAME ?? "Coding Agent";
 const HUMAN_USER = process.env.ALVEOLE_USER_NAME ?? "user";
-const ROOM_NAME = process.env.ALVEOLE_ROOM_NAME ?? "Alvéole";
+const ROOM_NAME = process.env.ALVEOLE_ROOM_NAME ?? "unicorn-project";
 
 const fail = (msg) => {
   console.error(`[bootstrap] ${msg}`);
@@ -47,7 +50,7 @@ const fail = (msg) => {
 
 const printSummary = (acct) => {
   const line = "─".repeat(64);
-  console.log(`\n${line}\n  Alvéole is ready.\n\n  Element Web:  http://localhost:8080 (or http://<this-host-LAN-ip>:8080 from your phone)\n  Homeserver:   ${HOMESERVER_PUBLIC_URL}\n  Sign in as:   ${acct.humanUserId}\n  Password:     ${acct.humanPassword}\n  Room:         ${ROOM_NAME} — the bot (@${BOT_USER}) is waiting there\n\n  Say hi in the room, send it a repo, and it will ask for a\n  GitHub PAT scoped to that repo — paste it when it asks.\n${line}\n`);
+  console.log(`\n${line}\n  Alvéole is ready.\n\n  Element Web:  http://localhost:8080 (or http://<this-host-LAN-ip>:8080 from your phone)\n  Homeserver:   ${HOMESERVER_PUBLIC_URL}\n  Sign in as:   ${acct.humanUserId}\n  Password:     ${acct.humanPassword}\n  Room:         ${ROOM_NAME} — the bot ${BOT_DISPLAY_NAME} (@${BOT_USER}) is waiting there\n\n  Say hi in the room, send it a repo, and it will ask for a\n  GitHub PAT scoped to that repo — paste it when it asks.\n${line}\n`);
 };
 
 const loadPrev = () => {
@@ -140,6 +143,13 @@ const joinedRoomIds = async (token) => {
   return res.ok && Array.isArray(res.data.joined_rooms) ? res.data.joined_rooms : [];
 };
 
+/** Set the bot's profile display name (what Element shows) — best-effort. */
+const setDisplayName = async (userId, displayname, token) => {
+  if (!displayname) return;
+  const res = await api("PUT", `/v3/profile/${encodeURIComponent(userId)}/displayname`, { displayname }, token);
+  if (!res.ok) console.warn(`[bootstrap] could not set the bot display name (${res.status}); it will show as @${BOT_USER}`);
+};
+
 const newPassword = () => randomBytes(24).toString("hex");
 
 const prev = loadPrev();
@@ -170,6 +180,7 @@ try {
     }
     botAccessToken = token;
   }
+  await setDisplayName(botUserId, BOT_DISPLAY_NAME, botAccessToken);
 
   // --- human account -------------------------------------------------------
   // Reuse the stored password whenever the account still exists so the human's

@@ -21,6 +21,8 @@ interface Mock {
   registered: Map<string, string>;
   createRoomCount: () => number;
   whoamiCount: () => number;
+  roomNames: () => string[];
+  displayNames: () => Map<string, string>;
 }
 
 /** A minimal in-memory homeserver good enough for the bootstrap's flow. */
@@ -31,6 +33,8 @@ async function startMockHomeserver(
   const registered = new Map<string, string>(Object.entries(opts.accounts ?? {}));
   const tokens = new Map<string, string>(); // access token -> user id
   const rooms = new Map<string, Set<string>>(); // room id -> members
+  const roomNames: string[] = [];
+  const displayNames = new Map<string, string>();
   let tokenSeq = 0;
   let roomSeq = 0;
   let creates = 0;
@@ -80,6 +84,13 @@ async function startMockHomeserver(
         return reply(200, { user_id: userId });
       }
 
+      if (url.pathname.startsWith("/_matrix/client/v3/profile/") && url.pathname.endsWith("/displayname")) {
+        if (!userId) return reply(401, { errcode: "M_UNKNOWN_TOKEN" });
+        const target = decodeURIComponent(url.pathname.slice("/_matrix/client/v3/profile/".length, -"/displayname".length));
+        displayNames.set(target, body.displayname);
+        return reply(200, {});
+      }
+
       if (url.pathname === "/_matrix/client/v3/joined_rooms") {
         if (!userId) return reply(401, { errcode: "M_UNKNOWN_TOKEN" });
         const joined = [...rooms.entries()].filter(([, members]) => members.has(userId)).map(([id]) => id);
@@ -89,6 +100,7 @@ async function startMockHomeserver(
       if (url.pathname === "/_matrix/client/v3/createRoom") {
         if (!userId) return reply(401, { errcode: "M_UNKNOWN_TOKEN" });
         creates++;
+        roomNames.push(body.name);
         const roomId = `!room${roomSeq === 0 ? "" : roomSeq}:${DOMAIN}`;
         roomSeq++;
         const members = new Set<string>([userId, ...((body.invite as string[] | undefined) ?? [])]);
@@ -108,6 +120,8 @@ async function startMockHomeserver(
     registered,
     createRoomCount: () => creates,
     whoamiCount: () => whoamis,
+    roomNames: () => roomNames,
+    displayNames: () => displayNames,
   };
 }
 
@@ -139,13 +153,15 @@ test("bootstrap registers bot+human, logs in, creates the room, writes the accou
 
     const account = JSON.parse(await readFile(accountFile, "utf8"));
     assert.equal(account.homeserverUrl, mock.url);
-    assert.equal(account.botUserId, `@alveole:${DOMAIN}`);
+    assert.equal(account.botUserId, `@coding-agent:${DOMAIN}`);
     assert.equal(account.humanUserId, `@user:${DOMAIN}`);
-    assert.match(account.botAccessToken, /^tok-alveole-/);
+    assert.match(account.botAccessToken, /^tok-coding-agent-/);
     assert.equal(account.roomId, `!room:${DOMAIN}`);
     assert.match(account.humanPassword, /^[0-9a-f]{48}$/);
     assert.match(account.botPassword, /^[0-9a-f]{48}$/);
-    assert.deepEqual([...mock.registered.keys()].sort(), ["alveole", "user"]);
+    assert.deepEqual([...mock.registered.keys()].sort(), ["coding-agent", "user"]);
+    assert.equal(mock.roomNames()[0], "unicorn-project");
+    assert.equal(mock.displayNames().get(`@coding-agent:${DOMAIN}`), "Coding Agent");
     assert.equal((await stat(accountFile)).mode & 0o777, 0o600);
     assert.match(first.stdout, /Alvéole is ready/);
     assert.match(first.stdout, /GitHub PAT/);
@@ -188,8 +204,9 @@ test("bootstrap self-heals a stale account file after the homeserver was reset",
 
     const account = JSON.parse(await readFile(accountFile, "utf8"));
     // Recreated on the reset homeserver...
-    assert.deepEqual([...mock.registered.keys()].sort(), ["alveole", "user"]);
-    assert.equal(account.botAccessToken, "tok-alveole-1");
+    assert.deepEqual([...mock.registered.keys()].sort(), ["coding-agent", "user"]);
+    assert.equal(account.botUserId, `@coding-agent:${DOMAIN}`);
+    assert.equal(account.botAccessToken, "tok-coding-agent-1");
     assert.notEqual(account.roomId, stale.roomId);
     // ...but passwords are preserved, so the human's sign-in still works.
     assert.equal(account.botPassword, stale.botPassword);
@@ -204,7 +221,7 @@ test("bootstrap self-heals a stale account file after the homeserver was reset",
 test("bootstrap fails loudly when the file is lost but the accounts already exist", async () => {
   // Homeserver persisted; /data/bot-account.json vanished: the password is
   // unrecoverable through the client API, so the only honest outcome is exit 1.
-  const mock = await startMockHomeserver({ accounts: { alveole: "secret-bot", user: "secret-human" } });
+  const mock = await startMockHomeserver({ accounts: { "coding-agent": "secret-bot", user: "secret-human" } });
   const dataDir = await mkdtemp(path.join(tmpdir(), "alveole-bootstrap-it-"));
   try {
     const run = await runBootstrap(mock.url, path.join(dataDir, "missing.json"));
