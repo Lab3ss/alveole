@@ -125,19 +125,20 @@ async function startMockHomeserver(
   };
 }
 
-function runBootstrap(url: string, accountFile: string, registrationToken = "it-token") {
+function runBootstrap(url: string, accountFile: string, registrationToken = "it-token", backupFile?: string) {
   return new Promise<{ code: number; stdout: string; stderr: string }>((resolve, reject) => {
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      HOMESERVER_URL: url,
+      REGISTRATION_TOKEN: registrationToken,
+      BOT_ACCOUNT_FILE: accountFile,
+    };
+    delete env.BOT_ACCOUNT_BACKUP_FILE;
+    if (backupFile) env.BOT_ACCOUNT_BACKUP_FILE = backupFile;
     execFile(
       process.execPath,
       ["deploy/bootstrap/bootstrap.mjs"],
-      {
-        env: {
-          ...process.env,
-          HOMESERVER_URL: url,
-          REGISTRATION_TOKEN: registrationToken,
-          BOT_ACCOUNT_FILE: accountFile,
-        },
-      },
+      { env },
       (err, stdout, stderr) => resolve({ code: err && typeof err.code === "number" ? err.code : err ? 1 : 0, stdout, stderr }),
     );
   });
@@ -219,9 +220,9 @@ test("bootstrap self-heals a stale account file after the homeserver was reset",
 });
 
 test("bootstrap recovers when the file is lost but the accounts already exist", async () => {
-  // Homeserver persisted, /data/bot-account.json vanished: the old password
-  // can't be read back through the client API, so rather than exit (leaving the
-  // broker with no bot) the bootstrap registers fresh suffixed accounts.
+  // Homeserver persisted, /data/bot-account.json vanished. The bot's password is
+  // unrecoverable, so it takes a fresh username; the human is still signed in, so
+  // their existing account is kept and invited (not replaced).
   const mock = await startMockHomeserver({ accounts: { "coding-agent": "secret-bot", user: "secret-human" } });
   const dataDir = await mkdtemp(path.join(tmpdir(), "alveole-bootstrap-it-"));
   const accountFile = path.join(dataDir, "missing.json");
@@ -231,12 +232,15 @@ test("bootstrap recovers when the file is lost but the accounts already exist", 
 
     const account = JSON.parse(await readFile(accountFile, "utf8"));
     assert.match(account.botUserId, /^@coding-agent-[0-9a-f]{4}:localhost:8008$/);
-    assert.match(account.humanUserId, /^@user-[0-9a-f]{4}:localhost:8008$/);
+    assert.equal(account.humanUserId, `@user:${DOMAIN}`); // the signed-in human, not a new one
+    assert.equal(account.humanPassword, undefined); // unknown; not needed to invite
     assert.equal(account.roomId, `!room:${DOMAIN}`);
     assert.match(account.botAccessToken, /^tok-coding-agent-/);
-    // The canonical names are untouched; the fresh ones are added alongside.
-    assert.ok(mock.registered.has("coding-agent") && mock.registered.has("user"));
-    assert.equal(mock.registered.size, 4);
+    // No new human account was created: only a suffixed bot joined the originals.
+    const keys = [...mock.registered.keys()].sort();
+    assert.equal(keys.length, 3);
+    assert.ok(keys.includes("coding-agent") && keys.includes("user"));
+    assert.ok(keys.some((k) => /^coding-agent-[0-9a-f]{4}$/.test(k)));
   } finally {
     mock.server.close();
     await rm(dataDir, { recursive: true, force: true });
@@ -246,7 +250,8 @@ test("bootstrap recovers when the file is lost but the accounts already exist", 
 test("bootstrap recovers when the account file is stale but the accounts still exist", async () => {
   // File present but its password no longer matches the live account (e.g. the
   // file was restored from a different homeserver): login fails, register hits
-  // M_USER_IN_USE, and the suffixed fallback still yields a working bot.
+  // M_USER_IN_USE, and the suffixed fallback still yields a working bot while
+  // the existing human is kept.
   const mock = await startMockHomeserver({ accounts: { "coding-agent": "current", user: "current" } });
   const dataDir = await mkdtemp(path.join(tmpdir(), "alveole-bootstrap-it-"));
   const accountFile = path.join(dataDir, "bot-account.json");
@@ -264,10 +269,41 @@ test("bootstrap recovers when the account file is stale but the accounts still e
     assert.equal(run.code, 0, `recovery failed: ${run.stderr}`);
     const account = JSON.parse(await readFile(accountFile, "utf8"));
     assert.match(account.botUserId, /^@coding-agent-[0-9a-f]{4}:localhost:8008$/);
+    assert.equal(account.humanUserId, `@user:${DOMAIN}`);
     assert.notEqual(account.roomId, `!old:${DOMAIN}`);
   } finally {
     mock.server.close();
     await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+test("bootstrap restores the same bot and room from the homeserver-data backup when /data is lost", async () => {
+  const mock = await startMockHomeserver();
+  const dataDir = await mkdtemp(path.join(tmpdir(), "alveole-bootstrap-it-"));
+  const backupDir = await mkdtemp(path.join(tmpdir(), "alveole-bootstrap-backup-"));
+  const accountFile = path.join(dataDir, "bot-account.json");
+  const backupFile = path.join(backupDir, "bot-account.json");
+  try {
+    const first = await runBootstrap(mock.url, accountFile, "it-token", backupFile);
+    assert.equal(first.code, 0, `first run failed: ${first.stderr}`);
+    const account = JSON.parse(await readFile(backupFile, "utf8"));
+    assert.equal(account.botUserId, `@coding-agent:${DOMAIN}`);
+
+    // Lose /data: the primary file is gone, only the homeserver-side copy remains.
+    await rm(accountFile, { force: true });
+    const second = await runBootstrap(mock.url, accountFile, "it-token", backupFile);
+    assert.equal(second.code, 0, `restore failed: ${second.stderr}`);
+    const restored = JSON.parse(await readFile(accountFile, "utf8"));
+    assert.equal(restored.botUserId, `@coding-agent:${DOMAIN}`); // SAME bot
+    assert.equal(restored.roomId, account.roomId); // SAME room
+    assert.equal(restored.botAccessToken, account.botAccessToken);
+    assert.deepEqual([...mock.registered.keys()].sort(), ["coding-agent", "user"]); // no new accounts
+    assert.equal(mock.createRoomCount(), 1); // no new room
+    assert.match(second.stdout, /reconciled/);
+  } finally {
+    mock.server.close();
+    await rm(dataDir, { recursive: true, force: true });
+    await rm(backupDir, { recursive: true, force: true });
   }
 });
 

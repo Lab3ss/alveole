@@ -111,6 +111,10 @@ services:
     image: alveole-broker:local
     entrypoint: ["node", "/app/deploy/bootstrap/bootstrap.mjs"]
     restart: "no"
+    # Root so it can write the credential backup into the homeserver's volume
+    # (owned by the homeserver container) as well as /data. The broker is root
+    # too (see its service).
+    user: root
     profiles:
       - matrix-included
     environment:
@@ -121,8 +125,12 @@ services:
       ALVEOLE_BOT_DISPLAY_NAME: ${ALVEOLE_BOT_DISPLAY_NAME:-Coding Agent}
       ALVEOLE_USER_NAME: ${ALVEOLE_USER_NAME:-user}
       ALVEOLE_ROOM_NAME: ${ALVEOLE_ROOM_NAME:-unicorn-project}
+      # Second copy of the credentials, kept with the homeserver's data so the
+      # two independent volumes can't lose the bot while the accounts survive.
+      BOT_ACCOUNT_BACKUP_FILE: /homeserver-data/alveole-bot-account.json
     volumes:
       - data:/data
+      - homeserver-data:/homeserver-data
     networks:
       - internal
     depends_on:
