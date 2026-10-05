@@ -13,6 +13,10 @@
  * Requires: MATRIX_HOMESERVER, MATRIX_TOKEN (this bot's account),
  * OPENROUTER_API_KEY (the one and only LLM credential, shared into every
  * room's pod at provision time — never stored per-room in Git).
+ *
+ * Optional: MATRIX_E2EE (default true — decrypt/encrypt encrypted rooms via a
+ * Rust crypto store, kept next to the registry DB) and MATRIX_CRYPTO_STORE
+ * (override that directory).
  */
 import { Effect, Layer, ManagedRuntime } from "effect";
 import { readFile } from "node:fs/promises";
@@ -20,6 +24,7 @@ import { MatrixAdapterLive } from "./adapter/matrix.ts";
 import { Orchestrator, OrchestratorLive } from "./core/orchestrator.ts";
 import { RegistryLive } from "./core/registry-service.ts";
 import { WorkspaceLive } from "./core/workspace.ts";
+import { resolveCryptoStorePath } from "./util.ts";
 
 let homeserver = process.env.MATRIX_HOMESERVER!;
 let matrixToken = process.env.MATRIX_TOKEN!;
@@ -63,6 +68,17 @@ if (!homeserver || !matrixToken) {
 }
 if (!openrouterKey) throw new Error("OPENROUTER_API_KEY required");
 
+// E2EE is on by default. The crypto store persists the bot's device identity
+// and room keys; keep it on the same durable volume as the registry (compose:
+// /data, k8s: the registry PVC) or the bot gets a new device on every restart
+// and can't decrypt history. MATRIX_E2EE=false opts out (unencrypted rooms
+// only); MATRIX_CRYPTO_STORE overrides the directory.
+const cryptoStoragePath = resolveCryptoStorePath({
+  registryDbPath: process.env.REGISTRY_DB_PATH ?? "registry.db",
+  e2eeEnv: process.env.MATRIX_E2EE,
+  cryptoStoreEnv: process.env.MATRIX_CRYPTO_STORE,
+});
+
 const orchestratorConfig = {
   idleTeardownMs: parseFloat(process.env.IDLE_TEARDOWN_HOURS ?? "24") * 3600_000,
   sweepIntervalMs: 15 * 60_000,
@@ -77,7 +93,7 @@ const orchestratorConfig = {
 const AppLayer = OrchestratorLive(orchestratorConfig).pipe(
   Layer.provide(RegistryLive),
   Layer.provide(WorkspaceLive({ openrouterKey })),
-  Layer.provide(MatrixAdapterLive({ homeserver, token: matrixToken, storagePath: "bot-state.json" })),
+  Layer.provide(MatrixAdapterLive({ homeserver, token: matrixToken, storagePath: "bot-state.json", cryptoStoragePath })),
 );
 
 const runtime = ManagedRuntime.make(AppLayer);

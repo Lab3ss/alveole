@@ -22,6 +22,8 @@ interface Mock {
   createRoomCount: () => number;
   whoamiCount: () => number;
   roomNames: () => string[];
+  roomNameOf: (roomId: string) => string | undefined;
+  messages: () => Array<{ roomId: string; body: string }>;
   displayNames: () => Map<string, string>;
 }
 
@@ -34,6 +36,8 @@ async function startMockHomeserver(
   const tokens = new Map<string, string>(); // access token -> user id
   const rooms = new Map<string, Set<string>>(); // room id -> members
   const roomNames: string[] = [];
+  const roomNamesById = new Map<string, string>();
+  const sentMessages: Array<{ roomId: string; body: string }> = [];
   const displayNames = new Map<string, string>();
   let tokenSeq = 0;
   let roomSeq = 0;
@@ -97,12 +101,32 @@ async function startMockHomeserver(
         return reply(200, { joined_rooms: joined });
       }
 
+      const stateName = url.pathname.match(/^\/_matrix\/client\/v3\/rooms\/([^/]+)\/state\/m\.room\.name\/?$/);
+      if (stateName) {
+        if (!userId) return reply(401, { errcode: "M_UNKNOWN_TOKEN" });
+        const roomId = decodeURIComponent(stateName[1]);
+        if (req.method === "GET") {
+          const name = roomNamesById.get(roomId);
+          return name === undefined ? reply(404, { errcode: "M_NOT_FOUND" }) : reply(200, { name });
+        }
+        roomNamesById.set(roomId, body.name);
+        return reply(200, {});
+      }
+
+      const sendMessage = url.pathname.match(/^\/_matrix\/client\/v3\/rooms\/([^/]+)\/send\/m\.room\.message\/[^/]+$/);
+      if (sendMessage && req.method === "PUT") {
+        if (!userId) return reply(401, { errcode: "M_UNKNOWN_TOKEN" });
+        sentMessages.push({ roomId: decodeURIComponent(sendMessage[1]), body: body.body });
+        return reply(200, { event_id: `$ev${sentMessages.length}` });
+      }
+
       if (url.pathname === "/_matrix/client/v3/createRoom") {
         if (!userId) return reply(401, { errcode: "M_UNKNOWN_TOKEN" });
         creates++;
         roomNames.push(body.name);
         const roomId = `!room${roomSeq === 0 ? "" : roomSeq}:${DOMAIN}`;
         roomSeq++;
+        roomNamesById.set(roomId, body.name);
         const members = new Set<string>([userId, ...((body.invite as string[] | undefined) ?? [])]);
         rooms.set(roomId, members);
         return reply(200, { room_id: roomId });
@@ -121,17 +145,20 @@ async function startMockHomeserver(
     createRoomCount: () => creates,
     whoamiCount: () => whoamis,
     roomNames: () => roomNames,
+    roomNameOf: (roomId: string) => roomNamesById.get(roomId),
+    messages: () => sentMessages,
     displayNames: () => displayNames,
   };
 }
 
-function runBootstrap(url: string, accountFile: string, registrationToken = "it-token", backupFile?: string) {
+function runBootstrap(url: string, accountFile: string, registrationToken = "it-token", backupFile?: string, extraEnv: Record<string, string> = {}) {
   return new Promise<{ code: number; stdout: string; stderr: string }>((resolve, reject) => {
     const env: NodeJS.ProcessEnv = {
       ...process.env,
       HOMESERVER_URL: url,
       REGISTRATION_TOKEN: registrationToken,
       BOT_ACCOUNT_FILE: accountFile,
+      ...extraEnv,
     };
     delete env.BOT_ACCOUNT_BACKUP_FILE;
     if (backupFile) env.BOT_ACCOUNT_BACKUP_FILE = backupFile;
@@ -162,7 +189,12 @@ test("bootstrap registers bot+human, logs in, creates the room, writes the accou
     assert.match(account.botPassword, /^[0-9a-f]{48}$/);
     assert.deepEqual([...mock.registered.keys()].sort(), ["coding-agent", "user"]);
     assert.equal(mock.roomNames()[0], "unicorn-project");
+    assert.equal(mock.roomNameOf(`!room:${DOMAIN}`), "unicorn-project");
     assert.equal(mock.displayNames().get(`@coding-agent:${DOMAIN}`), "Coding Agent");
+    // The demo room gets exactly one welcome message, naming the bot to invite.
+    assert.equal(mock.messages().length, 1);
+    assert.equal(mock.messages()[0].roomId, `!room:${DOMAIN}`);
+    assert.match(mock.messages()[0].body, /@coding-agent:localhost:8008/);
     assert.equal((await stat(accountFile)).mode & 0o777, 0o600);
     assert.match(first.stdout, /Alvéole is ready/);
     assert.match(first.stdout, /GitHub PAT/);
@@ -175,6 +207,7 @@ test("bootstrap registers bot+human, logs in, creates the room, writes the accou
     assert.match(second.stdout, /reused room/);
     assert.equal(mock.registered.size, 2);
     assert.equal(mock.createRoomCount(), 1);
+    assert.equal(mock.messages().length, 1); // welcome is not repeated on restart
 
     const again = JSON.parse(await readFile(accountFile, "utf8"));
     assert.equal(again.humanPassword, account.humanPassword); // password never rotated
@@ -304,6 +337,35 @@ test("bootstrap restores the same bot and room from the homeserver-data backup w
     mock.server.close();
     await rm(dataDir, { recursive: true, force: true });
     await rm(backupDir, { recursive: true, force: true });
+  }
+});
+
+test("bootstrap syncs the reused demo room name to ALVEOLE_ROOM_NAME and welcomes once", async () => {
+  const mock = await startMockHomeserver();
+  const dataDir = await mkdtemp(path.join(tmpdir(), "alveole-bootstrap-it-"));
+  const accountFile = path.join(dataDir, "bot-account.json");
+  try {
+    const first = await runBootstrap(mock.url, accountFile, "it-token", undefined, { ALVEOLE_ROOM_NAME: "Old Name" });
+    assert.equal(first.code, 0, first.stderr);
+    assert.equal(mock.roomNameOf(`!room:${DOMAIN}`), "Old Name");
+    assert.equal(mock.messages().length, 1);
+
+    // Config renamed: the reused room is renamed in place and re-welcomed once.
+    const second = await runBootstrap(mock.url, accountFile, "it-token", undefined, { ALVEOLE_ROOM_NAME: "Unicorn Project" });
+    assert.equal(second.code, 0, second.stderr);
+    assert.match(second.stdout, /renamed room/);
+    assert.equal(mock.roomNameOf(`!room:${DOMAIN}`), "Unicorn Project");
+    assert.equal(mock.messages().length, 2);
+    assert.equal(mock.createRoomCount(), 1); // renamed, not recreated
+
+    // Steady state: nothing changes, no extra message.
+    const third = await runBootstrap(mock.url, accountFile, "it-token", undefined, { ALVEOLE_ROOM_NAME: "Unicorn Project" });
+    assert.equal(third.code, 0, third.stderr);
+    assert.equal(mock.messages().length, 2);
+    assert.equal(mock.createRoomCount(), 1);
+  } finally {
+    mock.server.close();
+    await rm(dataDir, { recursive: true, force: true });
   }
 });
 

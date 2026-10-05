@@ -65,7 +65,7 @@ const fail = (msg) => {
 const printSummary = (acct) => {
   const line = "─".repeat(64);
   const password = acct.humanPassword ?? "(unchanged — use the password you already have)";
-  console.log(`\n${line}\n  Alvéole is ready.\n\n  Element Web:  http://localhost:8080 (or http://<this-host-LAN-ip>:8080 from your phone)\n  Homeserver:   ${HOMESERVER_PUBLIC_URL}\n  Sign in as:   ${acct.humanUserId}\n  Password:     ${password}\n  Room:         ${ROOM_NAME} — the bot ${BOT_DISPLAY_NAME} (@${BOT_USER}) is waiting there\n\n  Say hi in the room, send it a repo, and it will ask for a\n  GitHub PAT scoped to that repo — paste it when it asks.\n${line}\n`);
+  console.log(`\n${line}\n  Alvéole is ready.\n\n  Element Web:  http://localhost:8080 (or http://<this-host-LAN-ip>:8080 from your phone)\n  Homeserver:   ${HOMESERVER_PUBLIC_URL}\n  Sign in as:   ${acct.humanUserId}\n  Password:     ${password}\n  Room:         ${ROOM_NAME} — the bot ${BOT_DISPLAY_NAME} (${acct.botUserId}) is waiting there\n  Invite the bot to other rooms as: ${acct.botUserId}\n\n  Say hi in the room, send it a repo, and it will ask for a\n  GitHub PAT scoped to that repo — paste it when it asks.\n${line}\n`);
 };
 
 const loadPrev = () => {
@@ -193,7 +193,14 @@ const serverNameOf = (userId) => userId.slice(userId.indexOf(":") + 1);
 const setDisplayName = async (userId, displayname, token) => {
   if (!displayname) return;
   const res = await api("PUT", `/v3/profile/${encodeURIComponent(userId)}/displayname`, { displayname }, token);
-  if (!res.ok) console.warn(`[bootstrap] could not set the bot display name (${res.status}); it will show as @${BOT_USER}`);
+  if (!res.ok) console.warn(`[bootstrap] could not set the bot display name (${res.status}); it will show as ${userId}`);
+};
+
+/** Post a plain-text message to a room as the bot — best-effort. */
+const sendRoomMessage = async (roomId, body, token) => {
+  const txn = `bootstrap-${Date.now()}-${randomBytes(4).toString("hex")}`;
+  const res = await api("PUT", `/v3/rooms/${encodeURIComponent(roomId)}/send/m.room.message/${txn}`, { msgtype: "m.text", body }, token);
+  if (!res.ok) console.warn(`[bootstrap] could not post the welcome message (${res.status})`);
 };
 
 const newPassword = () => randomBytes(24).toString("hex");
@@ -280,14 +287,38 @@ try {
 
   // --- shared room ---------------------------------------------------------
   // Reuse the room only when the bot is still joined to it; otherwise create a
-  // new one. Keeps restarts from spawning a room per `up`.
+  // new one. Keeps restarts from spawning a room per `up`. The name is kept in
+  // sync with ALVEOLE_ROOM_NAME so an old install picks up a renamed default,
+  // and the demo room gets a one-time welcome message when it is created or
+  // (re)named.
   let roomReused = false;
+  let roomInitialized = false;
   if (roomId && (await joinedRoomIds(botAccessToken)).includes(roomId)) {
     roomReused = true;
+    const current = await api("GET", `/v3/rooms/${encodeURIComponent(roomId)}/state/m.room.name/`, undefined, botAccessToken);
+    const currentName = current.ok ? current.data?.name : undefined;
+    if (currentName !== ROOM_NAME) {
+      const renamed = await api("PUT", `/v3/rooms/${encodeURIComponent(roomId)}/state/m.room.name/`, { name: ROOM_NAME }, botAccessToken);
+      if (renamed.ok) {
+        roomInitialized = true;
+        console.log(`[bootstrap] renamed room ${roomId} to "${ROOM_NAME}"`);
+      }
+    }
   } else {
     const roomRes = await api("POST", "/v3/createRoom", { name: ROOM_NAME, invite: [humanUserId], preset: "private_chat" }, botAccessToken);
     if (!roomRes.ok) throw new Error(`creating the room failed: ${roomRes.status} ${JSON.stringify(roomRes.data)}`);
     roomId = roomRes.data.room_id;
+    roomInitialized = true;
+  }
+
+  // One-off welcome in the demo room (only when it is first created or renamed,
+  // so restarts don't repeat it): how to spin up more rooms with the bot.
+  if (roomInitialized) {
+    await sendRoomMessage(
+      roomId,
+      `Hey! I just created this first room as an example — create as many others as you want. To make me jump in, just invite ${botUserId}.`,
+      botAccessToken,
+    );
   }
 
   const account = {

@@ -4,14 +4,16 @@
  * The ONLY module that knows about Matrix: sync redelivery dedup, message
  * filters (own messages, non-text, pre-start events), event rendering with
  * the current emoji formatting, redaction (needs moderator power level), room
- * labels, and how approval prompts are phrased/answered. Swap this file for
+ * labels, E2EE (optional Rust crypto store — decrypts inbound, encrypts
+ * outbound), and how approval prompts are phrased/answered. Swap this file for
  * another platform without touching the core (src/core/orchestrator.ts).
  *
  * Rendering notes: events carry semantics, not presentation — the emoji
  * prefixes below are this channel's rendering choices, and `result` output is
  * chunked to Matrix's event size limit (see capabilities.maxMessageChars).
  */
-import { AutojoinRoomsMixin, MatrixClient, SimpleFsStorageProvider } from "matrix-bot-sdk";
+import { AutojoinRoomsMixin, MatrixClient, RustSdkCryptoStorageProvider, SimpleFsStorageProvider } from "matrix-bot-sdk";
+import { StoreType as RustSdkCryptoStoreType } from "@matrix-org/matrix-sdk-crypto-nodejs";
 import { Effect, Layer } from "effect";
 import { ChatAdapter, type ChannelCapabilities, type ChatAdapterService, type InboundMessage, type OutboundEvent } from "./types.ts";
 import { describeError, splitForMatrix } from "../util.ts";
@@ -21,6 +23,13 @@ export type MatrixAdapterConfig = {
   readonly token: string;
   /** Where the sync token/filter state persists (usually on the /data volume). */
   readonly storagePath: string;
+  /**
+   * Directory for the E2EE crypto store (device keys + megolm sessions).
+   * Undefined disables E2EE — the bot then works in unencrypted rooms only.
+   * Must survive restarts, or the bot loses its device identity and can no
+   * longer decrypt events it previously could (see src/broker.ts).
+   */
+  readonly cryptoStoragePath?: string;
 };
 
 /** Matrix clients render plain text only — this profile is injected into every
@@ -121,7 +130,23 @@ const makeMatrixAdapter = (config: MatrixAdapterConfig): Effect.Effect<ChatAdapt
     // Constructor is sync and can only fail on bad arguments — still classified
     // so nothing below this line can throw.
     const client = yield* Effect.try({
-      try: () => new MatrixClient(config.homeserver, config.token, new SimpleFsStorageProvider(config.storagePath)),
+      try: () => {
+        // A RustSdkCryptoStorageProvider is the only crypto store matrix-bot-sdk
+        // supports; its presence is what enables E2EE. With it, the SDK
+        // decrypts inbound m.room.encrypted events (and re-emits them through
+        // the room.message/room.event handlers below) and transparently
+        // encrypts outbound sends in encrypted rooms. Unencrypted rooms are
+        // unaffected either way.
+        const cryptoStore = config.cryptoStoragePath
+          ? new RustSdkCryptoStorageProvider(config.cryptoStoragePath, RustSdkCryptoStoreType.Sqlite)
+          : undefined;
+        return new MatrixClient(
+          config.homeserver,
+          config.token,
+          new SimpleFsStorageProvider(config.storagePath),
+          cryptoStore,
+        );
+      },
       catch: (cause) => {
         console.error(`[matrix] chat-start-failed: cannot construct client — ${describeError(cause)}`);
         return "chat-start-failed" as const;
@@ -137,6 +162,11 @@ const makeMatrixAdapter = (config: MatrixAdapterConfig): Effect.Effect<ChatAdapt
     });
     const startedAt = Date.now();
     console.log(`[alveole] matrix adapter up as ${me} on ${config.homeserver}`);
+    console.log(
+      config.cryptoStoragePath
+        ? `[alveole] matrix E2EE enabled — crypto store at ${config.cryptoStoragePath}`
+        : `[alveole] matrix E2EE disabled — unencrypted rooms only (set MATRIX_E2EE=true to enable)`,
+    );
 
     const seenEventIds = new Set<string>();
 
@@ -207,6 +237,12 @@ const makeMatrixAdapter = (config: MatrixAdapterConfig): Effect.Effect<ChatAdapt
             senderId: event.sender,
             text: (event.content.body ?? "").trim(),
           });
+        });
+        // E2EE-only: a message the bot can't decrypt (missing room key, e.g.
+        // sent before the bot joined, or a device it hasn't seen). It never
+        // reaches onInbound, so surface it in the logs instead of going silent.
+        client.on("room.failed_decryption", (roomId: string, event: any, err: unknown) => {
+          console.warn(`[${roomId}] failed to decrypt ${event?.event_id ?? "an event"}:`, describeError(err));
         });
         // room.leave only fires for the bot's own membership (matrix-bot-sdk quirk) — anyone
         // else leaving/getting banned only shows up on the generic room.event firehose, so

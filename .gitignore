@@ -7,6 +7,7 @@ sessions/
 !.env.example
 bot-state*.json
 usage-*.json
+crypto-store/
 registry.db
 registry.db-*
 registry-*.db
