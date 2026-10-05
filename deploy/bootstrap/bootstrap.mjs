@@ -14,7 +14,11 @@
  *      still answers whoami, else logs in with the stored bot password, else
  *      registers (creating a password only when registering), and sets its
  *      profile display name (ALVEOLE_BOT_DISPLAY_NAME, default "Coding Agent";
- *      the localpart ALVEOLE_BOT_USER stays a valid Matrix username);
+ *      the localpart ALVEOLE_BOT_USER stays a valid Matrix username). If the
+ *      username is taken but no stored credential works (the file was lost
+ *      while the homeserver kept the accounts), it falls back to a unique
+ *      suffixed username rather than failing — a bot that exists beats a
+ *      bricked install;
  *   4. ensures the human account exists the same way (login with the stored
  *      password, else register) so the human's password survives a homeserver
  *      reset instead of being rotated every run;
@@ -113,7 +117,11 @@ const register = async (username, password) => {
     }
     res = await api("POST", "/v3/register", { ...body, auth });
   }
-  if (!res.ok) throw new Error(`registering @${username} failed: ${res.status} ${JSON.stringify(res.data)}`);
+  if (!res.ok) {
+    const err = new Error(`registering @${username} failed: ${res.status} ${JSON.stringify(res.data)}`);
+    err.errcode = res.data?.errcode; // callers recover specifically from M_USER_IN_USE
+    throw err;
+  }
   return res.data.user_id;
 };
 
@@ -152,6 +160,29 @@ const setDisplayName = async (userId, displayname, token) => {
 
 const newPassword = () => randomBytes(24).toString("hex");
 
+/**
+ * Register an account, falling back to a unique suffixed username when `base`
+ * is already taken. This recovers the "account file lost, homeserver kept the
+ * accounts" case: the old password can't be read back through the client API,
+ * so instead of failing (and leaving the broker with no bot) we create a fresh
+ * account. The base name is tried first with `preferredPassword`, so a
+ * homeserver reset restores the canonical identity and keeps the stored
+ * password.
+ */
+const registerWithFallback = async (base, preferredPassword) => {
+  let username = base;
+  let password = preferredPassword ?? newPassword();
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return { userId: await register(username, password), password };
+    } catch (err) {
+      if (err?.errcode !== "M_USER_IN_USE" || attempt >= 4) throw err;
+      username = `${base}-${randomBytes(2).toString("hex")}`;
+      password = newPassword();
+    }
+  }
+};
+
 const prev = loadPrev();
 
 let botUserId = prev?.botUserId;
@@ -160,21 +191,24 @@ let botAccessToken = prev?.botAccessToken;
 let humanUserId = prev?.humanUserId;
 let humanPassword = prev?.humanPassword;
 let roomId = prev?.roomId;
-let botReused = false;
 
 try {
   // --- bot account ---------------------------------------------------------
   // Prefer the stored token (cheap, no new device); fall back to the stored
-  // password; only register when the account is genuinely gone. This is what
-  // detects the "file survived, homeserver was reset" case: whoami 401s, login
-  // 403s, and we recreate the account instead of handing the broker a dead token.
+  // password; only register when neither works. This is what detects the "file
+  // survived, homeserver was reset" case: whoami 401s, login 403s, and we
+  // recreate the account. registerWithFallback then covers the inverse — the
+  // file was lost but the account still exists — by taking a fresh username
+  // instead of exiting with M_USER_IN_USE.
+  let botReused = false;
   if (botUserId && botAccessToken && (await tokenIsLive(botAccessToken))) {
     botReused = true;
   } else {
     let token = botUserId && botPassword ? await tryLogin(botUserId, botPassword, "alveole-broker") : undefined;
     if (!token) {
-      botPassword = botPassword ?? newPassword();
-      botUserId = await register(BOT_USER, botPassword);
+      const created = await registerWithFallback(BOT_USER, botPassword);
+      botUserId = created.userId;
+      botPassword = created.password;
       token = await tryLogin(botUserId, botPassword, "alveole-broker");
       if (!token) throw new Error(`could not log the bot in after registering @${BOT_USER}`);
     }
@@ -184,12 +218,17 @@ try {
 
   // --- human account -------------------------------------------------------
   // Reuse the stored password whenever the account still exists so the human's
-  // sign-in survives restarts and homeserver resets alike. Only generate a new
-  // password when we actually have to register a fresh account.
+  // sign-in survives restarts and homeserver resets alike. When the bot was
+  // reused the homeserver is intact, so trust the stored human creds rather
+  // than logging in on every restart (each login spawns a new device). Only
+  // generate a new password when we actually have to register a fresh account.
   if (!(humanUserId && humanPassword && botReused)) {
-    humanPassword = humanPassword ?? newPassword();
-    const token = humanUserId ? await tryLogin(humanUserId, humanPassword, "alveole-human") : undefined;
-    if (!token) humanUserId = await register(HUMAN_USER, humanPassword);
+    const humanToken = humanUserId && humanPassword ? await tryLogin(humanUserId, humanPassword, "alveole-human") : undefined;
+    if (!humanToken) {
+      const created = await registerWithFallback(HUMAN_USER, humanPassword);
+      humanUserId = created.userId;
+      humanPassword = created.password;
+    }
   }
 
   // --- shared room ---------------------------------------------------------
@@ -222,5 +261,5 @@ try {
   );
   printSummary(account);
 } catch (err) {
-  fail(`${err.message}\n[bootstrap] hint: if the accounts already exist on the homeserver but ${ACCOUNT_FILE} was lost, restore it (or wipe the homeserver-data volume) and re-run; a mismatched password cannot be recovered through the client API`);
+  fail(`${err.message}\n[bootstrap] hint: a registration that keeps failing usually means the registration token is wrong or registration is disabled; if the homeserver state is inconsistent, wipe the homeserver-data volume (and optionally ${ACCOUNT_FILE}) and re-run`);
 }
