@@ -65,7 +65,7 @@ const fail = (msg) => {
 const printSummary = (acct) => {
   const line = "─".repeat(64);
   const password = acct.humanPassword ?? "(unchanged — use the password you already have)";
-  console.log(`\n${line}\n  Alvéole is ready.\n\n  Element Web:  http://localhost:8080 (or http://<this-host-LAN-ip>:8080 from your phone)\n  Homeserver:   ${HOMESERVER_PUBLIC_URL}\n  Sign in as:   ${acct.humanUserId}\n  Password:     ${password}\n  Room:         ${ROOM_NAME} — the bot ${BOT_DISPLAY_NAME} (@${BOT_USER}) is waiting there\n\n  Say hi in the room, send it a repo, and it will ask for a\n  GitHub PAT scoped to that repo — paste it when it asks.\n${line}\n`);
+  console.log(`\n${line}\n  Alvéole is ready.\n\n  Element Web:  http://localhost:8080 (or http://<this-host-LAN-ip>:8080 from your phone)\n  Homeserver:   ${HOMESERVER_PUBLIC_URL}\n  Sign in as:   ${acct.humanUserId}\n  Password:     ${password}\n  Room:         ${ROOM_NAME} — the bot ${BOT_DISPLAY_NAME} (${acct.botUserId}) is waiting there\n  Invite the bot to other rooms as: ${acct.botUserId}\n\n  Say hi in the room, send it a repo, and it will ask for a\n  GitHub PAT scoped to that repo — paste it when it asks.\n${line}\n`);
 };
 
 const loadPrev = () => {
@@ -193,7 +193,7 @@ const serverNameOf = (userId) => userId.slice(userId.indexOf(":") + 1);
 const setDisplayName = async (userId, displayname, token) => {
   if (!displayname) return;
   const res = await api("PUT", `/v3/profile/${encodeURIComponent(userId)}/displayname`, { displayname }, token);
-  if (!res.ok) console.warn(`[bootstrap] could not set the bot display name (${res.status}); it will show as @${BOT_USER}`);
+  if (!res.ok) console.warn(`[bootstrap] could not set the bot display name (${res.status}); it will show as ${userId}`);
 };
 
 const newPassword = () => randomBytes(24).toString("hex");
