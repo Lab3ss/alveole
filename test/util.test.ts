@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseRepo, describeError, formatUsage, splitForMatrix } from "../src/util.ts";
+import { parseRepo, describeError, formatUsage, splitForMatrix, resolveCryptoStorePath } from "../src/util.ts";
 
 test("parseRepo accepts owner/name", () => {
   assert.equal(parseRepo("lab3ss/alveole"), "lab3ss/alveole");
@@ -63,4 +63,28 @@ test("splitForMatrix hard-splits content with no line boundaries", () => {
   const parts = splitForMatrix(text, 1000);
   assert.equal(parts.join(""), text);
   assert.ok(parts.length >= 3);
+});
+
+test("resolveCryptoStorePath defaults on, next to the registry DB", () => {
+  assert.equal(
+    resolveCryptoStorePath({ registryDbPath: "/data/registry.db" }),
+    "/data/crypto-store",
+  );
+  assert.equal(
+    resolveCryptoStorePath({ registryDbPath: "registry.db" }),
+    "crypto-store",
+  );
+});
+
+test("resolveCryptoStorePath honors an explicit override", () => {
+  assert.equal(
+    resolveCryptoStorePath({ registryDbPath: "/data/registry.db", cryptoStoreEnv: "/keys" }),
+    "/keys",
+  );
+});
+
+test("resolveCryptoStorePath is disabled by an explicit off value", () => {
+  for (const off of ["false", "FALSE", "0", "no", "off"]) {
+    assert.equal(resolveCryptoStorePath({ registryDbPath: "/data/registry.db", e2eeEnv: off }), undefined);
+  }
 });

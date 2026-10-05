@@ -87,8 +87,11 @@ Copy `.env.example` to `.env` and set:
   services come up; removing it leaves out the included homeserver, Element
   Web, and the bootstrap: only the broker runs, against your homeserver.
 
-One constraint to know upfront: the bot cannot decrypt encrypted rooms, so
-onboard it in unencrypted ones (see [Security](#security)).
+End-to-end encryption is supported out of the box: the broker keeps a Matrix
+crypto store so the bot can decrypt rooms (encrypted or not). The store must
+persist across restarts — by default it lives next to the registry DB on the
+`/data` volume. Set `MATRIX_E2EE=false` to disable it (see
+[Security](#security)).
 
 #### 3. Build the runner
 
@@ -118,8 +121,8 @@ The stack is up; step into the room.
   server) and the username/password the bootstrap generated for you. Open
   Element, sign in, and the room is already there, with the bot waiting.
 
-- External Matrix mode: from your usual client, create an unencrypted room and
-  invite the bot's user; it joins and starts the same onboarding (see
+- External Matrix mode: from your usual client, create a room (encrypted or
+  not) and invite the bot's user; it joins and starts the same onboarding (see
   [Usage](#usage)).
 
 Then say hi: the bot walks you through three questions — which repo to work
@@ -139,6 +142,12 @@ Notes:
   Run rootless Docker or Podman for a hardened setup, and keep the default
   binds (only Element's 8080 is published; 8008 stays on loopback, so the
   homeserver's token-gated registration is never reachable from outside).
+- **E2EE from a browser needs HTTPS**: the bot's side of E2EE works over plain
+  HTTP, but browser clients require a secure context to encrypt/decrypt. The
+  included Element is served plain HTTP on `:8080`, which browsers only treat
+  as secure on `localhost`; to use encrypted rooms from a phone or another
+  machine, put Element behind a TLS reverse proxy (or skip the included Element
+  and use your own Matrix client over HTTPS).
 
 ### B. Add to your cluster using *k8s*
 
@@ -153,7 +162,8 @@ Requirements, in plain terms:
   published on ghcr for `linux/amd64`, so most people skip this);
 - a Matrix account for the bot — a dedicated user on the homeserver of
   your choice; the broker signs in as that user with an access token (see
-  the env vars below), and only in unencrypted rooms (no E2EE);
+  the env vars below), in encrypted or unencrypted rooms (E2EE is on by
+  default);
 - an [OpenRouter](https://openrouter.ai) API key — the single LLM
   credential, copied into every room's pod;
 - GitHub PATs scoped to the repos you'll onboard — one per repo, asked in
@@ -177,6 +187,8 @@ hard it may push (the guardrails):
 | Var | Purpose |
 |-----|---------|
 | `MATRIX_HOMESERVER`, `MATRIX_TOKEN` | the bot's Matrix account |
+| `MATRIX_E2EE` | decrypt/encrypt encrypted rooms; default `true`. Set `false` to run unencrypted-only |
+| `MATRIX_CRYPTO_STORE` | directory for the E2EE crypto store; default `crypto-store` next to `REGISTRY_DB_PATH` (the PVC) |
 | `OPENROUTER_API_KEY` | the only LLM credential, copied into every room's pod |
 | `WORKSPACE_BACKEND` | which infra driver provisions per-room workspaces: `k8s` or `compose`. The shipped `.env.example` sets `compose`; the code default is `k8s` |
 | `ROOMS_NAMESPACE` | where per-room pods live; default `alveole-rooms` |
@@ -192,7 +204,9 @@ Notes:
   create Pods/Secrets/Services in `ROOMS_NAMESPACE` — set up the RBAC for
   that namespace and nothing more).
 - The broker's registry (SQLite) should live on a PVC so room configs
-  survive restarts.
+  survive restarts. Its E2EE crypto store must persist too — keep it on the
+  same volume (the default puts it next to the registry DB) or the bot gets a
+  new device identity on every restart.
 - Use a `Recreate` strategy: a restart interrupts in-flight tasks, but
   nothing is lost — rooms re-provision on their next message.
 
@@ -204,8 +218,8 @@ pod, so testing it locally means running against a deployed pod.
 
 ## Usage
 
-1. Invite the bot to an **unencrypted** Matrix room (E2EE is not supported —
-   see [Security](#security)).
+1. Invite the bot to a Matrix room — encrypted or not (E2EE is supported; see
+   [Security](#security)).
 2. Answer its three onboarding questions: repo, GitHub PAT, model.
 3. Send tasks in plain language. The agent works and reports back.
 
@@ -243,12 +257,27 @@ Commands:
   clone and a fresh session — no conversation memory, no stale artifacts.
 - **Approval gate** — opencode's permission prompts (shell commands,
   `git push`, etc.) pause and ask in the room before running.
-- **Rooms are unencrypted** — `matrix-bot-sdk` has no E2EE provider wired
-  in, so the bot can't decrypt messages in an encrypted room. The PAT
-  message is redacted from room history right after the broker reads it
-  (best-effort), which reduces plaintext exposure but doesn't replace
-  transport encryption. Don't onboard repos whose PAT in room history is
-  unacceptable to you.
+- **E2EE supported, on by default** — the broker wires `matrix-bot-sdk`'s Rust
+  crypto store, so the bot decrypts incoming messages and encrypts its own in
+  encrypted rooms; the homeserver only ever sees ciphertext. The crypto store
+  (device keys + room keys) lives next to the registry DB and must persist
+  across restarts. Room keys cover the bot's own messages and everything sent
+  to it after it joined; messages from before a fresh device identity was
+  created won't decrypt — the broker logs those instead of going silent.
+- **The bot's device is unverified** — E2EE still works, but Matrix clients
+  show the bot as an unverified device (there's no interactive verification
+  flow). Traffic is encrypted; the warning is about device trust, not secrecy.
+  In external-homeserver mode, give the bot its own login session: the crypto
+  device ID comes from the access token, so a token lifted from a client you
+  also use would fight that client over the same device keys (compose mode's
+  bootstrap logs the bot in with a dedicated `alveole-broker` device).
+- **PAT redaction stays best-effort** — the PAT message is redacted from room
+  history right after the broker reads it (needs moderator power level for
+  Matrix redaction). With E2EE the message is ciphertext end-to-end anyway, so
+  history exposure is minimal; redaction is still done so nobody scrolling back
+  sees even the encrypted event. Set `MATRIX_E2EE=false` to run unencrypted,
+  but then the old caveat applies: don't onboard repos whose PAT in room history
+  is unacceptable to you.
 
 ## License
 
