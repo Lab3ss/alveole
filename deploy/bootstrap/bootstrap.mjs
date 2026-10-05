@@ -9,7 +9,8 @@
  *
  *   1. waits for the homeserver (GET /_matrix/client/versions, 2s retry, 120s);
  *   2. loads the previous account file (a cache: bot/human user ids, passwords,
- *      room id), if any;
+ *      room id), if any — falling back to the copy kept in the homeserver's own
+ *      data volume so losing /data alone still restores the SAME bot and room;
  *   3. ensures the bot account exists — reuses the stored access token when it
  *      still answers whoami, else logs in with the stored bot password, else
  *      registers (creating a password only when registering), and sets its
@@ -19,26 +20,35 @@
  *      while the homeserver kept the accounts), it falls back to a unique
  *      suffixed username rather than failing — a bot that exists beats a
  *      bricked install;
- *   4. ensures the human account exists the same way (login with the stored
- *      password, else register) so the human's password survives a homeserver
- *      reset instead of being rotated every run;
+ *   4. ensures the human account exists: login with the stored password, else
+ *      register. If the human already exists but we hold no working password,
+ *      keep the existing user id and invite it (a fresh human would invite the
+ *      wrong person and leave the logged-in one out of the room);
  *   5. reuses the stored room when the bot is still joined to it, else creates
  *      the shared room (private_chat, human invited, NOT encrypted — the broker
  *      has no E2EE);
  *   6. atomically rewrites /data/bot-account.json (0600) for the broker to pick
- *      up (src/broker.ts) and prints the human-facing credentials block that
- *      `docker compose logs bootstrap` shows.
+ *      up (src/broker.ts), mirrors it to the homeserver-data copy, and prints
+ *      the human-facing credentials block that `docker compose logs bootstrap`
+ *      shows.
  *
- * This makes restarts idempotent AND self-healing: if the homeserver data was
- * reset while /data survived, the stale file is detected (whoami/login fail),
- * the accounts and room are recreated, and the file is rewritten — no wipe, no
- * duplicate room. The recovery is keyed on the homeserver's reality, never on
- * fs.existsSync. Only node built-ins (node 22, global fetch).
+ * This makes restarts idempotent AND self-healing in both directions: a
+ * surviving file plus a reset homeserver re-registers the accounts; a lost file
+ * plus a surviving homeserver restores the same bot from the homeserver-data
+ * copy (or, absent that, creates fresh accounts). The recovery is keyed on the
+ * homeserver's reality, never on fs.existsSync. Only node built-ins (node 22,
+ * global fetch).
  */
-import { readFileSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 
 const ACCOUNT_FILE = process.env.BOT_ACCOUNT_FILE ?? "/data/bot-account.json";
+// Optional second copy of the account file, kept inside the homeserver's own
+// data volume (see deploy/docker-compose.yml). The two volumes are independent,
+// so losing /data alone would lose the bot's credentials while the homeserver
+// keeps the accounts and the room — restoring from here brings the SAME bot
+// (and room) back instead of creating new ones.
+const BACKUP_FILE = process.env.BOT_ACCOUNT_BACKUP_FILE;
 const HOMESERVER_URL = (process.env.HOMESERVER_URL ?? "http://homeserver:8008").replace(/\/+$/, "");
 const HOMESERVER_PUBLIC_URL = process.env.HOMESERVER_PUBLIC_URL ?? "http://localhost:8008";
 const REGISTRATION_TOKEN = process.env.REGISTRATION_TOKEN ?? "";
@@ -54,14 +64,39 @@ const fail = (msg) => {
 
 const printSummary = (acct) => {
   const line = "─".repeat(64);
-  console.log(`\n${line}\n  Alvéole is ready.\n\n  Element Web:  http://localhost:8080 (or http://<this-host-LAN-ip>:8080 from your phone)\n  Homeserver:   ${HOMESERVER_PUBLIC_URL}\n  Sign in as:   ${acct.humanUserId}\n  Password:     ${acct.humanPassword}\n  Room:         ${ROOM_NAME} — the bot ${BOT_DISPLAY_NAME} (@${BOT_USER}) is waiting there\n\n  Say hi in the room, send it a repo, and it will ask for a\n  GitHub PAT scoped to that repo — paste it when it asks.\n${line}\n`);
+  const password = acct.humanPassword ?? "(unchanged — use the password you already have)";
+  console.log(`\n${line}\n  Alvéole is ready.\n\n  Element Web:  http://localhost:8080 (or http://<this-host-LAN-ip>:8080 from your phone)\n  Homeserver:   ${HOMESERVER_PUBLIC_URL}\n  Sign in as:   ${acct.humanUserId}\n  Password:     ${password}\n  Room:         ${ROOM_NAME} — the bot ${BOT_DISPLAY_NAME} (@${BOT_USER}) is waiting there\n\n  Say hi in the room, send it a repo, and it will ask for a\n  GitHub PAT scoped to that repo — paste it when it asks.\n${line}\n`);
 };
 
 const loadPrev = () => {
-  try {
-    return JSON.parse(readFileSync(ACCOUNT_FILE, "utf8"));
-  } catch {
-    return undefined; // absent, partial, or corrupt — treat as a fresh run
+  // Prefer the live file the broker reads; fall back to the copy kept with the
+  // homeserver when /data was recreated but the accounts survived.
+  for (const file of [ACCOUNT_FILE, BACKUP_FILE]) {
+    if (!file) continue;
+    try {
+      return JSON.parse(readFileSync(file, "utf8"));
+    } catch {
+      // absent, partial, or corrupt — try the next location
+    }
+  }
+  return undefined;
+};
+
+/** Atomically write `account` to every configured location (best-effort for the backup). */
+const persist = (account) => {
+  const json = JSON.stringify(account, null, 2) + "\n";
+  const tmp = `${ACCOUNT_FILE}.tmp`;
+  writeFileSync(tmp, json, { mode: 0o600 });
+  renameSync(tmp, ACCOUNT_FILE); // atomic — the broker polls this file
+  if (BACKUP_FILE) {
+    try {
+      mkdirSync(BACKUP_FILE.substring(0, BACKUP_FILE.lastIndexOf("/")), { recursive: true });
+      const btmp = `${BACKUP_FILE}.tmp`;
+      writeFileSync(btmp, json, { mode: 0o600 });
+      renameSync(btmp, BACKUP_FILE);
+    } catch (err) {
+      console.warn(`[bootstrap] could not write the backup at ${BACKUP_FILE}: ${err.message}`);
+    }
   }
 };
 
@@ -151,6 +186,9 @@ const joinedRoomIds = async (token) => {
   return res.ok && Array.isArray(res.data.joined_rooms) ? res.data.joined_rooms : [];
 };
 
+/** The server name (domain) of a user id: @localpart:server → "server". */
+const serverNameOf = (userId) => userId.slice(userId.indexOf(":") + 1);
+
 /** Set the bot's profile display name (what Element shows) — best-effort. */
 const setDisplayName = async (userId, displayname, token) => {
   if (!displayname) return;
@@ -217,17 +255,26 @@ try {
   await setDisplayName(botUserId, BOT_DISPLAY_NAME, botAccessToken);
 
   // --- human account -------------------------------------------------------
-  // Reuse the stored password whenever the account still exists so the human's
-  // sign-in survives restarts and homeserver resets alike. When the bot was
-  // reused the homeserver is intact, so trust the stored human creds rather
-  // than logging in on every restart (each login spawns a new device). Only
-  // generate a new password when we actually have to register a fresh account.
+  // The human only needs to be reachable so the room can invite them, and we
+  // never need their password for that. Reuse the stored creds when they still
+  // work; if the account already exists but we hold no working password (the
+  // file was lost), KEEP the canonical user id and invite that — registering a
+  // fresh human would invite a different person and leave the real one out of
+  // the room. Skipping the login when the bot was reused avoids spawning a
+  // device on every restart.
   if (!(humanUserId && humanPassword && botReused)) {
     const humanToken = humanUserId && humanPassword ? await tryLogin(humanUserId, humanPassword, "alveole-human") : undefined;
     if (!humanToken) {
-      const created = await registerWithFallback(HUMAN_USER, humanPassword);
-      humanUserId = created.userId;
-      humanPassword = created.password;
+      const password = humanPassword ?? newPassword();
+      try {
+        humanUserId = await register(HUMAN_USER, password);
+        humanPassword = password;
+      } catch (err) {
+        if (err?.errcode !== "M_USER_IN_USE" || !botUserId) throw err;
+        humanUserId = humanUserId ?? `@${HUMAN_USER}:${serverNameOf(botUserId)}`;
+        humanPassword = undefined; // unknown, and not needed to invite them
+        console.warn(`[bootstrap] human account ${humanUserId} already exists — keeping it and inviting it (password unchanged, not reprinted)`);
+      }
     }
   }
 
@@ -252,9 +299,7 @@ try {
     humanPassword,
     roomId,
   };
-  const tmp = `${ACCOUNT_FILE}.tmp`;
-  writeFileSync(tmp, JSON.stringify(account, null, 2) + "\n", { mode: 0o600 });
-  renameSync(tmp, ACCOUNT_FILE); // atomic — the broker polls this file
+  persist(account);
 
   console.log(
     `[bootstrap] ${botReused ? "reconciled" : "recreated"} bot account, ${roomReused ? "reused" : "created"} room ${roomId}; ${ACCOUNT_FILE} written for the broker`,
