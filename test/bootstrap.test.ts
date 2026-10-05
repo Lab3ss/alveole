@@ -218,15 +218,53 @@ test("bootstrap self-heals a stale account file after the homeserver was reset",
   }
 });
 
-test("bootstrap fails loudly when the file is lost but the accounts already exist", async () => {
-  // Homeserver persisted; /data/bot-account.json vanished: the password is
-  // unrecoverable through the client API, so the only honest outcome is exit 1.
+test("bootstrap recovers when the file is lost but the accounts already exist", async () => {
+  // Homeserver persisted, /data/bot-account.json vanished: the old password
+  // can't be read back through the client API, so rather than exit (leaving the
+  // broker with no bot) the bootstrap registers fresh suffixed accounts.
   const mock = await startMockHomeserver({ accounts: { "coding-agent": "secret-bot", user: "secret-human" } });
   const dataDir = await mkdtemp(path.join(tmpdir(), "alveole-bootstrap-it-"));
+  const accountFile = path.join(dataDir, "missing.json");
   try {
-    const run = await runBootstrap(mock.url, path.join(dataDir, "missing.json"));
-    assert.equal(run.code, 1);
-    assert.match(run.stderr, /already exist/);
+    const run = await runBootstrap(mock.url, accountFile);
+    assert.equal(run.code, 0, `recovery failed: ${run.stderr}`);
+
+    const account = JSON.parse(await readFile(accountFile, "utf8"));
+    assert.match(account.botUserId, /^@coding-agent-[0-9a-f]{4}:localhost:8008$/);
+    assert.match(account.humanUserId, /^@user-[0-9a-f]{4}:localhost:8008$/);
+    assert.equal(account.roomId, `!room:${DOMAIN}`);
+    assert.match(account.botAccessToken, /^tok-coding-agent-/);
+    // The canonical names are untouched; the fresh ones are added alongside.
+    assert.ok(mock.registered.has("coding-agent") && mock.registered.has("user"));
+    assert.equal(mock.registered.size, 4);
+  } finally {
+    mock.server.close();
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+test("bootstrap recovers when the account file is stale but the accounts still exist", async () => {
+  // File present but its password no longer matches the live account (e.g. the
+  // file was restored from a different homeserver): login fails, register hits
+  // M_USER_IN_USE, and the suffixed fallback still yields a working bot.
+  const mock = await startMockHomeserver({ accounts: { "coding-agent": "current", user: "current" } });
+  const dataDir = await mkdtemp(path.join(tmpdir(), "alveole-bootstrap-it-"));
+  const accountFile = path.join(dataDir, "bot-account.json");
+  await writeFile(accountFile, JSON.stringify({
+    homeserverUrl: mock.url,
+    botUserId: `@coding-agent:${DOMAIN}`,
+    botAccessToken: "dead-token",
+    botPassword: "stale-bot-password",
+    humanUserId: `@user:${DOMAIN}`,
+    humanPassword: "stale-human-password",
+    roomId: `!old:${DOMAIN}`,
+  }), { mode: 0o600 });
+  try {
+    const run = await runBootstrap(mock.url, accountFile);
+    assert.equal(run.code, 0, `recovery failed: ${run.stderr}`);
+    const account = JSON.parse(await readFile(accountFile, "utf8"));
+    assert.match(account.botUserId, /^@coding-agent-[0-9a-f]{4}:localhost:8008$/);
+    assert.notEqual(account.roomId, `!old:${DOMAIN}`);
   } finally {
     mock.server.close();
     await rm(dataDir, { recursive: true, force: true });
