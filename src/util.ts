@@ -2,7 +2,28 @@
  * Small pure helpers shared across the broker — kept dependency-free so they
  * can be unit-tested without touching Matrix, the k8s API, or a live pod.
  */
+import { dirname, join } from "node:path";
 import type { SessionUsage } from "./opencode.ts";
+
+/**
+ * Where the Matrix E2EE crypto store lives (device keys + megolm sessions).
+ *
+ * E2EE is on by default; `MATRIX_E2EE=false` turns it off (unencrypted rooms
+ * only). The store must persist across restarts — losing it means a fresh
+ * device identity and undecryptable old events — so by default it sits next to
+ * the registry DB, on the same durable volume. `MATRIX_CRYPTO_STORE` overrides
+ * the directory. Returns undefined when E2EE is disabled.
+ */
+export function resolveCryptoStorePath(opts: {
+  readonly registryDbPath: string;
+  readonly e2eeEnv?: string;
+  readonly cryptoStoreEnv?: string;
+}): string | undefined {
+  const enabled = !["false", "0", "no", "off"].includes((opts.e2eeEnv ?? "true").trim().toLowerCase());
+  if (!enabled) return undefined;
+  if (opts.cryptoStoreEnv) return opts.cryptoStoreEnv;
+  return join(dirname(opts.registryDbPath), "crypto-store");
+}
 
 export function parseRepo(text: string): string | null {
   // Find a GitHub URL anywhere in the message — users paste it mid-sentence,

@@ -43,6 +43,10 @@ services:
       # empty and read from /data/bot-account.json (written by the bootstrap).
       MATRIX_HOMESERVER: ${MATRIX_HOMESERVER:-}
       MATRIX_TOKEN: ${MATRIX_TOKEN:-}
+      # E2EE on by default; its crypto store defaults to /data/crypto-store,
+      # next to the registry DB on the data volume (see .env.example).
+      MATRIX_E2EE: ${MATRIX_E2EE:-true}
+      MATRIX_CRYPTO_STORE: ${MATRIX_CRYPTO_STORE:-}
     volumes:
       # Root-equivalent on the host: see the README security section.
       - /var/run/docker.sock:/var/run/docker.sock
