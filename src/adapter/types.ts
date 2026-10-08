@@ -23,7 +23,9 @@ export type ChannelCapabilities = {
   readonly maxMessageChars: number;
   /** Whether the adapter can delete/redact a user's message (PAT scrubbing). */
   readonly canRedact: boolean;
-  /** Formatting rules injected into the room's runner pod; undefined = runner's baked-in default. */
+  /** Formatting rules injected into the room's runner pod as AGENT_RULES (the
+   * broker is their single source of truth). undefined = inject nothing; the
+   * runner keeps its baked permission config but gets no channel rules. */
   readonly agentRules?: string;
 };
 
@@ -33,7 +35,27 @@ export type InboundMessage = {
   /** Transport-native message id; supplied when the adapter supports redaction. */
   readonly messageId?: string;
   readonly senderId?: string;
+  /** Human-readable name of the sender, when the channel can resolve one —
+   * used to attribute lines in the ambient transcript handed to the agent. */
+  readonly senderName?: string;
+  /**
+   * Whether this message explicitly addresses the bot. In a shared room the
+   * bot only acts on messages that mention it; everything else is ambient
+   * conversation, kept as context for the next addressed message. Adapters
+   * MUST set this (a mention of the bot's own identity — see the Matrix
+   * adapter's detection), not a fuzzy "looks directed" heuristic.
+   */
+  readonly mentioned: boolean;
+  /** The raw message, mention included — what the agent is shown. */
   readonly text: string;
+  /**
+   * The message with the addressing mention token(s) stripped, used for
+   * core-side routing (slash commands, onboarding input, approval/question
+   * answers) whose parsers are anchored to the start of the text. Undefined
+   * falls back to `text`. `text` stays raw so the agent still sees the
+   * mention that addressed it.
+   */
+  readonly directive?: string;
 };
 
 /**

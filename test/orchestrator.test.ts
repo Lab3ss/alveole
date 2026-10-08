@@ -154,7 +154,7 @@ const guardrailOrchestrator = async (cap: Partial<import("../src/core/orchestrat
       return yield* Orchestrator;
     }),
   );
-  return (msg: InboundMessage) => Effect.runPromise(orch.handleInbound(msg));
+  return (msg: TestMsg) => Effect.runPromise(orch.handleInbound({ mentioned: true, ...msg }));
 };
 
 test.after(() => Promise.all([runtime.dispose(), ...createdRuntimes.map((rt) => rt.dispose())]));
@@ -166,8 +166,12 @@ const orchestrator = await runtime.runPromise(
 );
 
 /** handleInbound is a context-free Effect — run it explicitly (awaiting the
- * Effect object itself would be a silent no-op). */
-const run = (msg: InboundMessage) => Effect.runPromise(orchestrator.handleInbound(msg));
+ * Effect object itself would be a silent no-op).
+ *
+ * `mentioned` defaults to true here so existing tests keep exercising the
+ * addressed path; pass `mentioned: false` to test ambient conversation. */
+type TestMsg = Omit<InboundMessage, "mentioned"> & { mentioned?: boolean };
+const run = (msg: TestMsg) => Effect.runPromise(orchestrator.handleInbound({ mentioned: true, ...msg }));
 
 const until = async (check: () => boolean) => {
   for (let i = 0; i < 100; i++) {
@@ -201,7 +205,7 @@ const reset = () => {
 
 /** Full onboarding flow for one conversation — needed because reset() clears
  * the fake registry; every test must set up its own room. */
-const onboard = async (id = "!t1", runner: (m: InboundMessage) => Promise<void> = run) => {
+const onboard = async (id = "!t1", runner: (m: TestMsg) => Promise<void> = run) => {
   await runner({ conversationId: id, text: "lab3ss/alveole" });
   await runner({ conversationId: id, text: "ghp_token1234567", messageId: "$m1" });
   await runner({ conversationId: id, text: "anthropic/claude-sonnet-4.5" });
@@ -561,4 +565,79 @@ test("subagent sessions (foreign sessionIDs) don't finish or abort the room's tu
   // The room's own turn still completes normally afterwards.
   watchHandlers!.onIdle("ses1");
   await until(() => recorded.some((r) => r.event.type === "result"));
+});
+
+// ---------------------------------------------------------------------------
+// Mention-gated shared rooms — the bot only acts when @-mentioned, but keeps
+// unaddressed chatter as context for the next time it is addressed.
+// ---------------------------------------------------------------------------
+
+test("an unmentioned message is ambient: silent, no onboarding, no provisioning", async () => {
+  reset();
+  await run({ conversationId: "!a1", text: "hello everyone", mentioned: false, senderName: "Alice" });
+  assert.equal(rooms.get("!a1"), undefined); // the gate runs before the room is even created
+  assert.equal(recorded.length, 0);
+  assert.equal(calls.provision.length, 0);
+});
+
+test("ambient chatter becomes context on the next addressed turn, which keeps the mention", async () => {
+  reset();
+  await onboard("!a2");
+  await run({ conversationId: "!a2", text: "I think it's in auth.ts", mentioned: false, senderName: "Alice" });
+  await run({ conversationId: "!a2", text: "agreed", mentioned: false, senderName: "Bob" });
+  assert.equal(calls.sent.length, 0); // nothing fired while ambient
+
+  await run({ conversationId: "!a2", text: "@Coding Agent fix it", senderName: "Alice" });
+  assert.equal(calls.sent.length, 1);
+  assert.ok(calls.sent[0].includes("Alice: I think it's in auth.ts"));
+  assert.ok(calls.sent[0].includes("Bob: agreed"));
+  assert.ok(calls.sent[0].includes("@Coding Agent fix it")); // raw text, mention preserved
+});
+
+test("the ambient transcript is capped at ~8000 chars (newest kept)", async () => {
+  reset();
+  await onboard("!a3");
+  await run({ conversationId: "!a3", text: "x".repeat(20000), mentioned: false, senderName: "Alice" });
+  await run({ conversationId: "!a3", text: "@Coding Agent go" });
+  assert.equal(calls.sent.length, 1);
+  assert.ok(calls.sent[0].length < 9000, `expected a clipped transcript, got ${calls.sent[0].length}`);
+});
+
+test("an unmentioned reply does not answer a pending approval; a mentioned one does", async () => {
+  reset();
+  await onboard("!a4");
+  watchHandlers!.onPermission({ sessionId: "ses1", permissionId: "pa1", description: "git push" });
+  await until(() => recorded.some((r) => r.event.type === "approval-request"));
+
+  await run({ conversationId: "!a4", text: "yes", mentioned: false, senderName: "Bob" });
+  assert.equal(calls.respond.length, 0); // ambient chatter must never decide
+
+  await run({ conversationId: "!a4", text: "@Coding Agent yes", directive: "yes", senderName: "Alice" });
+  assert.deepEqual(calls.respond, [true]);
+});
+
+test("a mentioned message while busy is declined and not fired", async () => {
+  reset();
+  await onboard("!a5");
+  await run({ conversationId: "!a5", text: "@Coding Agent do X" });
+  assert.deepEqual(calls.sent, ["@Coding Agent do X"]);
+  await run({ conversationId: "!a5", text: "@Coding Agent also Y" });
+  assert.ok(recorded.some((r) => r.event.type === "info" && r.event.text.includes("Still working")));
+  assert.deepEqual(calls.sent, ["@Coding Agent do X"]);
+  watchHandlers!.onIdle("ses1");
+  await until(() => recorded.some((r) => r.event.type === "result"));
+});
+
+test("the mention is stripped for onboarding (directive) while raw text is preserved for the agent", async () => {
+  reset();
+  await run({ conversationId: "!a6", text: "@Coding Agent lab3ss/alveole", directive: "lab3ss/alveole" });
+  assert.equal(rooms.get("!a6")?.repo, "lab3ss/alveole");
+  assert.equal(rooms.get("!a6")?.onboarding, "token");
+});
+
+test("a tagged slash command is recognized once the mention is stripped", async () => {
+  reset();
+  await onboard("!a7");
+  await run({ conversationId: "!a7", text: "@Coding Agent /usage", directive: "/usage" });
+  assert.ok(recorded.some((r) => r.event.type === "usage"));
 });
