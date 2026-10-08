@@ -101,6 +101,23 @@ services:
     volumes:
       - ./element/config.template.json:/element-config.template.json:ro
       - ./element/render-config.sh:/docker-entrypoint.d/90-render-config.sh:ro
+      - ./element/branding/logo.png:/app/branding/logo.png:ro
+      - ./element/branding/background.jpg:/app/branding/background.jpg:ro
+      # Favicon / PWA icons: index.html links the hashed names, manifest.json the plain
+      # ones. Hashes belong to the pinned image above: re-check them when bumping it.
+      - ./element/branding/icon-24.png:/app/vector-icons/24.png:ro
+      - ./element/branding/icon-24.png:/app/vector-icons/24.97ab000.png:ro
+      - ./element/branding/icon-120.png:/app/vector-icons/120.png:ro
+      - ./element/branding/icon-120.png:/app/vector-icons/120.570a7f9.png:ro
+      - ./element/branding/icon-144.png:/app/vector-icons/144.png:ro
+      - ./element/branding/icon-144.png:/app/vector-icons/144.5a63bf2.png:ro
+      - ./element/branding/icon-152.png:/app/vector-icons/152.png:ro
+      - ./element/branding/icon-152.png:/app/vector-icons/152.1ccdc8a.png:ro
+      - ./element/branding/icon-180.png:/app/vector-icons/180.png:ro
+      - ./element/branding/icon-180.png:/app/vector-icons/180.30b915f.png:ro
+      - ./element/branding/icon-512.png:/app/vector-icons/512.png:ro
+      - ./element/branding/icon-512.png:/app/vector-icons/512.7ce350d.png:ro
+      - ./element/branding/icon-1024.png:/app/vector-icons/1024.png:ro
     ports:
       - "${ELEMENT_BIND:-0.0.0.0}:8080:80"
     networks:
