@@ -7,5 +7,19 @@
   },
   "brand": "Alvéole",
   "disable_guests": true,
-  "show_labs_settings": false
+  "disable_custom_urls": true,
+  "show_labs_settings": false,
+  "default_theme": "dark",
+  "setting_defaults": {
+    "use_system_theme": false
+  },
+  "branding": {
+    "auth_header_logo_url": "branding/logo.png",
+    "welcome_background_url": "branding/background.jpg",
+    "auth_footer_links": [
+      { "text": "GitHub", "url": "https://github.com/Lab3ss/alveole" },
+      { "text": "Powered by Element", "url": "https://element.io" },
+      { "text": "Powered by OpenCode", "url": "https://opencode.ai/" }
+    ]
+  }
 }
