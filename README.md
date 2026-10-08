@@ -219,11 +219,16 @@ pod, so testing it locally means running against a deployed pod.
 ## Usage
 
 1. Invite the bot to a Matrix room — encrypted or not (E2EE is supported; see
-   [Security](#security)).
+   [Security](#security)). The room can hold several people: everyone shares
+   one session, sees everything, and can chime in.
 2. Answer its three onboarding questions: repo, GitHub PAT, model.
-3. Send tasks in plain language. The agent works and reports back.
+3. **@-mention the bot** in every message meant for it — a task, a command, an
+   approval answer. It reads the whole room but only acts when mentioned, so
+   developers can talk among themselves without waking it. When you mention
+   it, it is handed the messages that were said since its last turn as
+   background, so it keeps the thread's context.
 
-Commands:
+Commands (also @-mention them):
 
 - `/model [id]` — show or change the room's model (any
   [OpenRouter](https://openrouter.ai/models) model id), effective on the next
