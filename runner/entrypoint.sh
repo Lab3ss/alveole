@@ -5,9 +5,11 @@ set -eu
 : "${GH_TOKEN:?GH_TOKEN env var required}"
 
 # The chat channel's formatting capability profile (e.g. Matrix needs
-# plain-text-only agent output) is injected by the broker as AGENT_RULES.
-# When present it REPLACES the baked-in default (opencode-rules.md), which
-# exists only for standalone/manual pods not provisioned by the broker.
+# plain-text-only agent output) is injected by the broker as AGENT_RULES — the
+# broker is the single source of truth for these rules. When present, install
+# them and regenerate opencode.json to reference them; the broker always sets
+# this, so the fallback (the baked opencode.json, no instructions) only applies
+# to a runner started by hand.
 if [ -n "${AGENT_RULES:-}" ]; then
   echo "[runner] applying channel agent rules from env..."
   printf '%s\n' "$AGENT_RULES" > /home/node/.config/opencode/channel-rules.md

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { isBotMentioned, stripMention } from "../src/adapter/matrix.ts";
+import { channelRules, isBotMentioned, stripMention } from "../src/adapter/matrix.ts";
 
 const ME = "@coding-agent:matrix.example.org";
 const TOKENS = [ME, "@coding-agent", "Coding Agent"];
@@ -31,4 +31,10 @@ test("stripMention removes a leading mention token and its separator", () => {
 test("stripMention leaves an unmatched message untouched", () => {
   assert.equal(stripMention("no mention here", TOKENS), "no mention here");
   assert.equal(stripMention("@coding-agency hello", TOKENS), "@coding-agency hello");
+});
+
+test("channelRules names the bot's own handle", () => {
+  const rules = channelRules("@coding-agent");
+  assert.ok(rules.includes("@coding-agent"));
+  assert.ok(rules.includes("only act when addressed"));
 });

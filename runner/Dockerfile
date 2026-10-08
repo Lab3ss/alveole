@@ -18,15 +18,14 @@ RUN npm install -g --no-fund --no-audit "opencode-ai@${OPENCODE_VERSION}"
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh && chown node:node /entrypoint.sh
 
-# Matrix-specific agent rules, baked in as opencode's global config so they
-# apply to every room's session no matter which repo is cloned (the repo's own
-# AGENTS.md still merges on top; see opencode-rules.md — currently: plain-text
-# replies only, since Matrix clients don't render markdown).
+# Permission/maxSteps defaults as opencode's global config. The agent's channel
+# rules are NOT baked here: the broker is the single source of truth and injects
+# them as AGENT_RULES, which entrypoint.sh installs at runtime (see
+# src/adapter/matrix.ts's channelRules).
 COPY opencode.json /home/node/.config/opencode/opencode.json
-COPY opencode-rules.md /home/node/.config/opencode/opencode-rules.md
-# chown the directory itself, not just these two files: entrypoint.sh writes a
-# new channel-rules.md into it at runtime as `node`, which needs dir write
-# permission, not just file ownership.
+# chown the directory itself, not just the file: entrypoint.sh writes
+# channel-rules.md and a rules-referencing opencode.json into it at runtime as
+# `node`, which needs dir write permission, not just file ownership.
 RUN chown -R node:node /home/node/.config/opencode
 
 USER node

@@ -23,7 +23,9 @@ export type ChannelCapabilities = {
   readonly maxMessageChars: number;
   /** Whether the adapter can delete/redact a user's message (PAT scrubbing). */
   readonly canRedact: boolean;
-  /** Formatting rules injected into the room's runner pod; undefined = runner's baked-in default. */
+  /** Formatting rules injected into the room's runner pod as AGENT_RULES (the
+   * broker is their single source of truth). undefined = inject nothing; the
+   * runner keeps its baked permission config but gets no channel rules. */
   readonly agentRules?: string;
 };
 
