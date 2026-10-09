@@ -27,7 +27,7 @@ test(
     // warn-and-continue (production compose always has the broker container).
     process.env.BROKER_CONTAINER_NAME = "alveole-broker-does-not-exist-in-this-test";
 
-    const docker = await import("../src/docker.ts");
+    const docker = await import("../../../src/agents/coding/docker.ts");
 
     // Tiny stand-in runner whose entrypoint just sleeps: no GH_TOKEN needed.
     const buildDir = await mkdtemp(path.join(tmpdir(), "alveole-docker-it-img-"));

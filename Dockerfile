@@ -1,8 +1,8 @@
 # Alvéole broker — single global instance. Talks to Matrix, the k8s API
 # or the host docker daemon (to provision/tear down per-room pods/containers)
 # and each room's opencode server over HTTP. It never clones a repo or runs
-# git/gh itself — that's runner/'s job, inside the untrusted per-room pod —
-# so this image stays minimal.
+# git/gh itself — that's the runner's job (src/agents/coding/runner/), inside
+# the untrusted per-room pod — so this image stays minimal.
 FROM node:22-bookworm-slim
 
 # Compose mode (WORKSPACE_BACKEND=compose) drives docker through its CLI —

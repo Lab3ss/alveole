@@ -1,10 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Effect, Layer, ManagedRuntime } from "effect";
-import { ChatAdapter, type ChatAdapterService, type InboundMessage, type OutboundEvent } from "../src/adapter/types.ts";
-import { Orchestrator, OrchestratorLive } from "../src/core/orchestrator.ts";
-import { Registry, type RegistryService, type Room } from "../src/core/registry-service.ts";
-import { Workspace, type Failure, type WatchHandlers, type WorkspaceService } from "../src/core/workspace.ts";
+import { ChatAdapter, type ChatAdapterService, type InboundMessage, type OutboundEvent } from "../../../src/platform/adapter/types.ts";
+import { Orchestrator, OrchestratorLive } from "../../../src/agents/coding/orchestrator.ts";
+import { Registry, type RegistryService, type Room } from "../../../src/agents/coding/registry-service.ts";
+import { Workspace, type Failure, type WatchHandlers, type WorkspaceService } from "../../../src/agents/coding/workspace.ts";
 
 // ---------------------------------------------------------------------------
 // Fakes — the whole point of the adapter seam: onboarding, commands, and the
@@ -29,7 +29,7 @@ const calls = {
 let watchHandlers: WatchHandlers | undefined;
 
 const fakeAdapter: ChatAdapterService = {
-  capabilities: { markdown: false, maxMessageChars: 3000, canRedact: true, selfMention: "@coding-agent", agentRules: "FAKE-CHANNEL-RULES" },
+  capabilities: { markdown: false, maxMessageChars: 3000, canRedact: true, selfMention: "@coding-agent", formattingRules: "FAKE-CHANNEL-RULES" },
   start: () => Effect.void,
   send: (conversationId, event) =>
     Effect.sync(() => {
@@ -148,7 +148,7 @@ const runtime = ManagedRuntime.make(
 // the test runner can reorder which timer fires first (real-world ratios are
 // 15 min vs 4 h, far beyond any jitter; the race only exists at ms scale).
 const createdRuntimes: Array<ManagedRuntime.ManagedRuntime<any, any>> = [];
-const guardrailOrchestrator = async (cap: Partial<import("../src/core/orchestrator.ts").OrchestratorConfig>) => {
+const guardrailOrchestrator = async (cap: Partial<import("../../../src/agents/coding/orchestrator.ts").OrchestratorConfig>) => {
   const rt = ManagedRuntime.make(
     Layer.provide(
       OrchestratorLive({ idleTeardownMs: 3600_000, sweepIntervalMs: 60_000, turnWatchdogMs: 0, turnMaxMs: 0, sessionCostCapUsd: 0, defaultModel: DEFAULT_MODEL, ...cap }),
@@ -300,20 +300,19 @@ test("permission request is asked in the room; 'yes' relays allow to opencode", 
   reset();
   await onboard("!t3");
   watchHandlers!.onPermission({ sessionId: "ses1", permissionId: "p1", description: "git push" });
-  await until(() => recorded.some((r) => r.event.type === "approval-request"));
+  await until(() => recorded.some((r) => r.event.type === "info" && r.event.text.includes("Approval needed")));
 
   await run({ conversationId: "!t3", text: "yes" });
   assert.deepEqual(calls.respond, [true]);
-  const decision = recorded.find((r) => r.event.type === "approval-result");
+  const decision = recorded.find((r) => r.event.type === "info" && r.event.text.includes("Approved"));
   assert.ok(decision);
-  assert.equal(decision.event.type === "approval-result" && decision.event.approved, true);
 });
 
 test("'no' denies and is relayed as deny", async () => {
   reset();
   await onboard("!t4");
   watchHandlers!.onPermission({ sessionId: "ses1", permissionId: "p2", description: "rm -rf /" });
-  await until(() => recorded.some((r) => r.event.type === "approval-request"));
+  await until(() => recorded.some((r) => r.event.type === "info" && r.event.text.includes("Approval needed")));
 
   await run({ conversationId: "!t4", text: "absolutely not" });
   assert.deepEqual(calls.respond, [false]);
@@ -324,7 +323,7 @@ test("a single question is answered with the whole reply, and the turn isn't lef
   await onboard("!t4b");
   await run({ conversationId: "!t4b", text: "build the feature" });
   watchHandlers!.onQuestion({ sessionId: "ses1", requestId: "q1", description: "Which env, staging or prod?", count: 1 });
-  await until(() => recorded.some((r) => r.event.type === "question"));
+  await until(() => recorded.some((r) => r.event.type === "info" && r.event.text.includes("❓")));
 
   await run({ conversationId: "!t4b", text: "staging" });
   assert.deepEqual(calls.questionAnswers, [[["staging"]]]);
@@ -346,7 +345,7 @@ test("a multi-question ask maps one reply line to each question, in order", asyn
     description: "1. Which env?\n2. Which branch?",
     count: 2,
   });
-  await until(() => recorded.some((r) => r.event.type === "question"));
+  await until(() => recorded.some((r) => r.event.type === "info" && r.event.text.includes("❓")));
 
   await run({ conversationId: "!t4c", text: "staging\nmain" });
   assert.deepEqual(calls.questionAnswers, [[["staging"], ["main"]]]);
@@ -358,7 +357,7 @@ test("/stop works while a question is pending and resolves it without POSTing", 
   reset();
   await onboard("!t4d");
   watchHandlers!.onQuestion({ sessionId: "ses1", requestId: "q3", description: "Which env?", count: 1 });
-  await until(() => recorded.some((r) => r.event.type === "question"));
+  await until(() => recorded.some((r) => r.event.type === "info" && r.event.text.includes("❓")));
 
   await run({ conversationId: "!t4d", text: "/stop" });
   assert.equal(calls.teardown.length, 1);
@@ -369,15 +368,15 @@ test("/stop works while an approval is pending and resolves it without POSTing",
   reset();
   await onboard("!t5");
   watchHandlers!.onPermission({ sessionId: "ses1", permissionId: "p3", description: "git push" });
-  await until(() => recorded.some((r) => r.event.type === "approval-request"));
+  await until(() => recorded.some((r) => r.event.type === "info" && r.event.text.includes("Approval needed")));
 
   await run({ conversationId: "!t5", text: "/stop" });
   assert.equal(calls.teardown.length, 1);
   assert.equal(calls.respond.length, 0); // answered (denied) locally, never POSTed to the dead pod
   assert.equal(rooms.get("!t5")?.podName, undefined);
-  const td = recorded.find((r) => r.event.type === "teardown");
+  const td = recorded.find((r) => r.event.type === "info" && r.event.text.includes("Stopped ("));
   assert.ok(td);
-  assert.equal(td.event.type === "teardown" && td.event.reason, "requested");
+  assert.match(td.event.type === "info" ? td.event.text : "", /Stopped \(requested\)/);
 });
 
 test("abandoned conversation tears down the pod and purges the registry row", async () => {
@@ -563,7 +562,7 @@ test("a pending approval exempts the turn from the watchdog (human gate waits by
   await onboard("!g2", runW);
   await runW({ conversationId: "!g2", text: "do the risky thing" });
   watchHandlers!.onPermission({ sessionId: "ses1", permissionId: "p9", description: "git push" });
-  await until(() => recorded.some((r) => r.event.type === "approval-request"));
+  await until(() => recorded.some((r) => r.event.type === "info" && r.event.text.includes("Approval needed")));
   await sleep(150); // > watchdog window — no abort while the approval is pending
   assert.equal(calls.aborted, 0);
   assert.equal(recorded.filter((r) => r.event.type === "error").length, 0);
@@ -658,7 +657,7 @@ test("an unmentioned reply does not answer a pending approval; a mentioned one d
   reset();
   await onboard("!a4");
   watchHandlers!.onPermission({ sessionId: "ses1", permissionId: "pa1", description: "git push" });
-  await until(() => recorded.some((r) => r.event.type === "approval-request"));
+  await until(() => recorded.some((r) => r.event.type === "info" && r.event.text.includes("Approval needed")));
 
   await run({ conversationId: "!a4", text: "yes", mentioned: false, senderName: "Bob" });
   assert.equal(calls.respond.length, 0); // ambient chatter must never decide

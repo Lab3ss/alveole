@@ -27,10 +27,12 @@ export type ChannelCapabilities = {
    * one, so core-composed hints can show users exactly how to address it.
    * undefined = the core falls back to a generic placeholder. */
   readonly selfMention?: string;
-  /** Formatting rules injected into the room's runner pod as AGENT_RULES (the
-   * broker is their single source of truth). undefined = inject nothing; the
-   * runner keeps its baked permission config but gets no channel rules. */
-  readonly agentRules?: string;
+  /** The channel's agent rule document (plain-text formatting plus the
+   * shared-room rule), injected into the room's runner as AGENT_RULES.
+   * The channel composes this from the platform formatting rules and the
+   * agent's persona, so the agent never bakes channel rules into its image.
+   * undefined = inject nothing; the runner keeps its baked config. */
+  readonly formattingRules?: string;
 };
 
 /** A user message as seen by the core — already filtered/deduped by the adapter. */
@@ -63,24 +65,18 @@ export type InboundMessage = {
 };
 
 /**
- * Outbound, core → chat. Lightly typed so adapters can render per channel
- * (Matrix keeps its current emoji formatting; a rich client could render
- * approval-request as buttons and cost-alert as a card) without the core
- * caring about presentation. Freeform `status`/`info` carry their own text.
+ * Outbound, core → chat. Deliberately a small, agent-agnostic vocabulary: the
+ * platform renders these per channel (Matrix keeps its current emoji
+ * formatting) without the core caring about presentation. An agent with richer
+ * semantics maps them onto these base events with its own presenter, so the
+ * shared union never learns one agent's vocabulary.
  */
 export type OutboundEvent =
   | { readonly type: "status"; readonly text: string }
   | { readonly type: "info"; readonly text: string }
   | { readonly type: "result"; readonly text: string }
   | { readonly type: "error"; readonly text: string }
-  | { readonly type: "usage"; readonly text: string }
-  | { readonly type: "approval-request"; readonly description: string }
-  | { readonly type: "approval-result"; readonly approved: boolean }
-  | { readonly type: "question"; readonly description: string }
-  | { readonly type: "cost-alert"; readonly stepUsd: number }
-  | { readonly type: "compacted" }
-  | { readonly type: "token-received"; readonly redacted: boolean }
-  | { readonly type: "teardown"; readonly reason: string; readonly repo: string };
+  | { readonly type: "usage"; readonly text: string };
 
 export interface ChatAdapterService {
   readonly capabilities: ChannelCapabilities;

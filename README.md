@@ -178,7 +178,7 @@ this repo:
   (built from this repo's `Dockerfile`).
 - `ghcr.io/lab3ss/alveole-runner` — the runner, what each room's pod
   actually runs: a disposable, isolated workspace with the agent inside
-  (built from `runner/Dockerfile`).
+  (built from `src/agents/coding/runner/Dockerfile`).
 
 The broker is the only thing you deploy: one Deployment, in-cluster, fed
 these env vars (a k8s Secret via `envFrom` works well). In order, they

@@ -10,7 +10,7 @@ import * as path from "node:path";
 const dbPath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "registry-test-")), "registry.db");
 process.env.REGISTRY_DB_PATH = dbPath;
 
-const { newRoom, getRoom, saveRoom, touch, idleRooms } = await import("../src/registry.ts");
+const { newRoom, getRoom, saveRoom, touch, idleRooms } = await import("../../../src/agents/coding/registry.ts");
 const { DatabaseSync } = await import("node:sqlite");
 
 test("newRoom starts onboarding at the repo step and persists", () => {

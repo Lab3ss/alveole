@@ -11,7 +11,7 @@
   "scripts": {
     "broker": "node --env-file-if-exists=.env src/broker.ts",
     "check": "tsc --noEmit",
-    "test": "node --test test/*.test.ts"
+    "test": "node --test \"test/**/*.test.ts\""
   },
   "dependencies": {
     "@kubernetes/client-node": "^2.0.0",

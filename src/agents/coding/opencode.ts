@@ -5,7 +5,7 @@
  * the cluster network.
  */
 import { Agent, fetch as undiciFetch } from "undici";
-import { describeError } from "./util.ts";
+import { describeError } from "../../platform/util.ts";
 
 // Node's *global* fetch defaults to a 5-minute socket timeout (undici's
 // Agent default headersTimeout/bodyTimeout), which a real multi-step coding

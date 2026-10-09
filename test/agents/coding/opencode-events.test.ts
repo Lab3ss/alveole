@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { dispatchEvent, extractTurnResult, type SseHandlers } from "../src/opencode.ts";
+import { dispatchEvent, extractTurnResult, type SseHandlers } from "../../../src/agents/coding/opencode.ts";
 
 function recording(): SseHandlers & { calls: Record<string, any[]> } {
   const calls: Record<string, any[]> = {
