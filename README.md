@@ -125,11 +125,12 @@ The stack is up; step into the room.
   not) and invite the bot's user; it joins and starts the same onboarding (see
   [Usage](#usage)).
 
-Then say hi: the bot walks you through three questions — which repo to work
-on, a GitHub PAT scoped to that repo (it lives only inside that room's
-runner and dies with it — see [Security](#security)), and which
-[OpenRouter](https://openrouter.ai) model to use. From then on, just send
-tasks in plain language.
+Then say hi: the bot walks you through two questions — which repo to work
+on, and a GitHub PAT scoped to that repo (it lives only inside that room's
+runner and dies with it — see [Security](#security)). Every room then starts
+on the model set by `DEFAULT_CODING_AGENT_MODEL` (default
+`deepseek/deepseek-v4.1-flash`); change it per room with `/model`. From then
+on, just send tasks in plain language.
 
 Notes:
 
@@ -221,7 +222,8 @@ pod, so testing it locally means running against a deployed pod.
 1. Invite the bot to a Matrix room — encrypted or not (E2EE is supported; see
    [Security](#security)). The room can hold several people: everyone shares
    one session, sees everything, and can chime in.
-2. Answer its three onboarding questions: repo, GitHub PAT, model.
+2. Answer its two onboarding questions: repo, GitHub PAT. The room then runs
+   on `DEFAULT_CODING_AGENT_MODEL` until you change it with `/model`.
 3. **@-mention the bot** in every message meant for it — a task, a command, an
    approval answer. It reads the whole room but only acts when mentioned, so
    developers can talk among themselves without waking it. When you mention

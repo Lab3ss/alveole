@@ -39,6 +39,9 @@ services:
       RUNNER_MEM: ${RUNNER_MEM:-2g}
       RUNNER_CPUS: ${RUNNER_CPUS:-2}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:?OPENROUTER_API_KEY is required (BYOK) — set it in .env}
+      # Default OpenRouter model for every newly onboarded room (per-room
+      # override: @<bot> /model <openrouter_model>).
+      DEFAULT_CODING_AGENT_MODEL: ${DEFAULT_CODING_AGENT_MODEL:-deepseek/deepseek-v4.1-flash}
       # External-Matrix mode: set both; in matrix-included mode they are left
       # empty and read from /data/bot-account.json (written by the bootstrap).
       MATRIX_HOMESERVER: ${MATRIX_HOMESERVER:-}
