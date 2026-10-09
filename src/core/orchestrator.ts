@@ -20,7 +20,7 @@
  */
 import { Context, Effect, Layer } from "effect";
 import { ChatAdapter, type InboundMessage, type OutboundEvent } from "../adapter/types.ts";
-import { describeError, formatUsage, parseRepo } from "../util.ts";
+import { describeError, formatUsage, parseRepo, shellQuote } from "../util.ts";
 import { Registry, type Room } from "./registry-service.ts";
 import { Workspace, type Failure } from "./workspace.ts";
 
@@ -476,7 +476,11 @@ const make = (config: OrchestratorConfig) =>
         const label = yield* adapter.label(room.roomId);
         const name = workspace.resourceName(room.roomId, label);
         yield* announce(room, "📦 creating pod…");
-        const password = yield* workspace.provision(name, { repo: room.repo!, token: room.token! }, adapter.capabilities.agentRules);
+        const password = yield* workspace.provision(
+          name,
+          { repo: room.repo!, token: room.token!, gitAuthorName: room.gitAuthorName, gitAuthorEmail: room.gitAuthorEmail },
+          adapter.capabilities.agentRules,
+        );
         serverPasswords.set(room.roomId, password);
         // Record podName as soon as the pod exists, not after it's confirmed
         // healthy — otherwise a crash during waitForRunning/createSession
@@ -547,6 +551,36 @@ const make = (config: OrchestratorConfig) =>
         const usage = yield* workspace.usage(workspace.serverUrl(room.podName!), password, room.sessionId!);
         yield* send(room.roomId, { type: "usage", text: formatUsage(usage) });
       });
+
+    /** Pushes the room's git identity overrides into a LIVE runner by rewriting
+     * its global git config through opencode's shell endpoint — so `/git-name`
+     * and `/git-email` take effect without a re-provision (which would drop the
+     * session). Returns false when there's no live runner (or a turn is running)
+     * and the change will instead be seeded on the next provision. Total: a
+     * failure to reach the runner degrades to "apply later", never fails the
+     * command. */
+    const applyGitIdentity = (room: Room): Effect.Effect<boolean> =>
+      Effect.gen(function* () {
+        if (!room.podName || !room.sessionId || busyRooms.has(room.roomId)) return false;
+        // Only override what's set; the other field keeps its boot value (from
+        // the GitHub token) when the runner comes back. Skip the shell entirely
+        // when neither is set (a fresh room that was never overridden).
+        const sets: string[] = [];
+        if (room.gitAuthorName) sets.push(`git config --global user.name ${shellQuote(room.gitAuthorName)}`);
+        if (room.gitAuthorEmail) sets.push(`git config --global user.email ${shellQuote(room.gitAuthorEmail)}`);
+        if (!sets.length) return false;
+        const password = serverPasswords.get(room.roomId) ?? (yield* workspace.serverPassword(room.podName));
+        serverPasswords.set(room.roomId, password);
+        yield* workspace.runShell(workspace.serverUrl(room.podName), password, room.sessionId, sets.join(" && "));
+        return true;
+      }).pipe(
+        Effect.catchAll((failure) =>
+          Effect.sync(() => {
+            console.warn(`[${room.roomId}] git-identity live apply failed (${failure.code}) — will apply on next provision`);
+            return false;
+          }),
+        ),
+      );
 
     /** The steady-state turn, asynchronous by design: provision (transparently),
      * probe, FIRE the prompt — and return. The turn may legitimately run for
@@ -757,6 +791,42 @@ const make = (config: OrchestratorConfig) =>
           // model is sent per-message (src/opencode.ts), never baked into the pod,
           // so this takes effect on the very next message — no restart needed.
           yield* send(roomId, { type: "info", text: `Model set to ${arg}. Takes effect on your next message.` });
+          return;
+        }
+
+        if (/^\/git-(name|email)\b/i.test(body)) {
+          const isEmail = /^\/git-email\b/i.test(body);
+          const label = isEmail ? "email" : "name";
+          const field = isEmail ? ("gitAuthorEmail" as const) : ("gitAuthorName" as const);
+          const room = registry.get(roomId);
+          const arg = body.replace(/^\/git-(?:name|email)\s*/i, "").trim();
+          if (!arg) {
+            const current = room?.[field];
+            yield* send(roomId, {
+              type: "info",
+              text: current
+                ? `Git author ${label}: ${current}`
+                : `No git author ${label} override set — the workspace derives it from the room's GitHub token.`,
+            });
+            return;
+          }
+          if (!room) {
+            yield* send(roomId, { type: "info", text: "No project set up in this room yet — send a repo first." });
+            return;
+          }
+          if (isEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(arg)) {
+            yield* send(roomId, { type: "info", text: "That doesn't look like an email address." });
+            return;
+          }
+          room[field] = arg;
+          registry.save(room);
+          const applied = yield* applyGitIdentity(room);
+          yield* send(roomId, {
+            type: "info",
+            text:
+              `Git author ${label} set to ${arg}. ` +
+              (applied ? "Takes effect now." : "Takes effect when the workspace next provisions."),
+          });
           return;
         }
 

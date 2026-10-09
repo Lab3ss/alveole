@@ -235,6 +235,11 @@ Commands (also @-mention them):
 - `/model [id]` — show or change the room's model (any
   [OpenRouter](https://openrouter.ai/models) model id), effective on the next
   message.
+- `/git-name [name]` / `/git-email [email]` — show or override the git commit
+  author for this room. Without an override, the workspace derives both from
+  the room's GitHub token at boot (display name, or the account's GitHub
+  noreply email when the address is private). An override takes effect
+  immediately on a live workspace, otherwise on the next provision.
 - `/usage` — session cost, token breakdown, context-compaction status.
   A one-line alert every $5 spent.
 - `/connect` — (k8s deployments) replies with the `kubectl port-forward` +

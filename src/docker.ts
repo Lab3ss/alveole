@@ -87,8 +87,18 @@ export function parseEnvFile(content: string): Record<string, string> {
 }
 
 /** The exact inverse of parseEnvFile for the room's env file. Pure — unit-tested. */
-export function envFileContent(env: { REPO: string; GH_TOKEN: string; OPENCODE_SERVER_PASSWORD: string; OPENROUTER_API_KEY: string }): string {
-  return `REPO=${env.REPO}\nGH_TOKEN=${env.GH_TOKEN}\nOPENCODE_SERVER_PASSWORD=${env.OPENCODE_SERVER_PASSWORD}\nOPENROUTER_API_KEY=${env.OPENROUTER_API_KEY}\n`;
+export function envFileContent(env: {
+  REPO: string;
+  GH_TOKEN: string;
+  OPENCODE_SERVER_PASSWORD: string;
+  OPENROUTER_API_KEY: string;
+  GIT_USER_NAME?: string;
+  GIT_USER_EMAIL?: string;
+}): string {
+  let out = `REPO=${env.REPO}\nGH_TOKEN=${env.GH_TOKEN}\nOPENCODE_SERVER_PASSWORD=${env.OPENCODE_SERVER_PASSWORD}\nOPENROUTER_API_KEY=${env.OPENROUTER_API_KEY}\n`;
+  if (env.GIT_USER_NAME) out += `GIT_USER_NAME=${env.GIT_USER_NAME}\n`;
+  if (env.GIT_USER_EMAIL) out += `GIT_USER_EMAIL=${env.GIT_USER_EMAIL}\n`;
+  return out;
 }
 
 /** `docker inspect .State` — only the fields the driver reads. */
@@ -247,6 +257,8 @@ export async function provisionRoom(name: string, env: RoomEnv, agentRules?: str
         GH_TOKEN: env.token,
         OPENCODE_SERVER_PASSWORD: serverPassword,
         OPENROUTER_API_KEY: env.openrouterKey,
+        GIT_USER_NAME: env.gitAuthorName,
+        GIT_USER_EMAIL: env.gitAuthorEmail,
       }),
       { mode: 0o600 },
     );

@@ -39,6 +39,7 @@ export type WorkspaceError =
   | "usage-fetch-failed" // GET /session/:id failed
   | "permission-respond-failed" // POSTing an approval decision failed
   | "question-respond-failed" // POSTing a question answer failed
+  | "shell-run-failed" // POSTing a shell command to the runner failed
   | "runner-version-mismatch" // the runner's opencode version != the one this client's contract targets
   | "watch-failed"; // SSE event stream couldn't be opened
 
@@ -67,7 +68,7 @@ export interface WorkspaceService {
   /** Idempotent provision (Secret+Pod+Service); resolves to the server password. */
   readonly provision: (
     resourceName: string,
-    project: { repo: string; token: string },
+    project: { repo: string; token: string; gitAuthorName?: string; gitAuthorEmail?: string },
     agentRules?: string,
   ) => Effect.Effect<string, Failure<"provision-failed" | "secret-read-failed">>;
   readonly waitForRunning: (resourceName: string) => Effect.Effect<void, Failure<"pod-wait-failed">>;
@@ -119,6 +120,15 @@ export interface WorkspaceService {
     requestId: string,
     answers: string[][],
   ) => Effect.Effect<void, Failure<"question-respond-failed">>;
+  /** Runs one shell command inside the room's workspace via opencode's
+   * `/session/:id/shell` (used by `/git-name` / `/git-email` to rewrite the
+   * live runner's git config without re-provisioning). */
+  readonly runShell: (
+    baseUrl: string,
+    password: string,
+    sessionId: string,
+    command: string,
+  ) => Effect.Effect<void, Failure<"shell-run-failed">>;
   /** Opens the SSE stream; resolves to a stop function. Handlers run detached. */
   readonly watch: (
     baseUrl: string,
@@ -221,6 +231,8 @@ const httpMethods = () => ({
     failing("permission-respond-failed", () => opencode.respondPermission(baseUrl, password, sessionId, permissionId, approved)),
   answerQuestion: (baseUrl: string, password: string, sessionId: string, requestId: string, answers: string[][]) =>
     failing("question-respond-failed", () => opencode.answerQuestion(baseUrl, password, sessionId, requestId, answers)),
+  runShell: (baseUrl: string, password: string, sessionId: string, command: string) =>
+    failing("shell-run-failed", () => opencode.runShell(baseUrl, password, sessionId, command)),
   watch: (baseUrl: string, password: string, handlers: WatchHandlers) =>
     failing("watch-failed", () =>
       opencode.watchPermissions(
@@ -245,7 +257,11 @@ const makeK8sWorkspace = (config: { openrouterKey: string }): WorkspaceService =
 
   provision: (name, project, agentRules) =>
     failing("provision-failed", () =>
-      k8s.provisionRoom(name, { repo: project.repo, token: project.token, openrouterKey: config.openrouterKey }, agentRules),
+      k8s.provisionRoom(
+        name,
+        { repo: project.repo, token: project.token, openrouterKey: config.openrouterKey, gitAuthorName: project.gitAuthorName, gitAuthorEmail: project.gitAuthorEmail },
+        agentRules,
+      ),
     ),
   waitForRunning: (name) => failing("pod-wait-failed", () => k8s.waitForRunning(name)),
   readPodState: (name) => failing("pod-read-failed", () => k8s.readRoomPodState(name)),
@@ -287,7 +303,11 @@ const makeComposeWorkspace = (config: { openrouterKey: string }): WorkspaceServi
 
     provision: (name, project, agentRules) =>
       failing("provision-failed", () =>
-        docker.provisionRoom(name, { repo: project.repo, token: project.token, openrouterKey: config.openrouterKey }, agentRules),
+        docker.provisionRoom(
+          name,
+          { repo: project.repo, token: project.token, openrouterKey: config.openrouterKey, gitAuthorName: project.gitAuthorName, gitAuthorEmail: project.gitAuthorEmail },
+          agentRules,
+        ),
       ),
     waitForRunning: (name) => failing("pod-wait-failed", () => docker.waitForRunning(name)),
     readPodState: (name) => failing("pod-read-failed", () => docker.readRoomPodState(name)),
