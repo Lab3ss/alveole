@@ -49,7 +49,15 @@ export function roomResourceName(roomId: string, roomName?: string): string {
   return slug ? `room-${slug}-${hash}` : `room-${hash}`;
 }
 
-export type RoomEnv = { repo: string; token: string; openrouterKey: string };
+export type RoomEnv = {
+  repo: string;
+  token: string;
+  openrouterKey: string;
+  /** Optional git commit identity override (`/git-name`, `/git-email`); when
+   * absent the runner derives it from the GitHub token at boot. */
+  gitAuthorName?: string;
+  gitAuthorEmail?: string;
+};
 
 async function ignoringConflict(fn: () => Promise<unknown>): Promise<void> {
   try {
@@ -91,6 +99,8 @@ export async function provisionRoom(name: string, env: RoomEnv, agentRules?: str
           GH_TOKEN: env.token,
           OPENCODE_SERVER_PASSWORD: crypto.randomBytes(16).toString("hex"),
           OPENROUTER_API_KEY: env.openrouterKey,
+          ...(env.gitAuthorName ? { GIT_USER_NAME: env.gitAuthorName } : {}),
+          ...(env.gitAuthorEmail ? { GIT_USER_EMAIL: env.gitAuthorEmail } : {}),
           ...(agentRules ? { AGENT_RULES: agentRules } : {}),
         },
       },

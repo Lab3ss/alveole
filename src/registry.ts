@@ -13,6 +13,10 @@ export type Room = {
   repo?: string;
   token?: string;
   model?: string;
+  /** Per-room git commit identity override (`/git-name`, `/git-email`). When
+   * unset, the runner derives it from the room's GitHub token at boot. */
+  gitAuthorName?: string;
+  gitAuthorEmail?: string;
   podName?: string; // set only while a pod is live
   sessionId?: string; // opencode session id; cleared when the pod is torn down
   lastActivity: number; // epoch ms
@@ -22,9 +26,24 @@ const db = new DatabaseSync(process.env.REGISTRY_DB_PATH ?? "registry.db");
 db.exec(
   `CREATE TABLE IF NOT EXISTS rooms (
      room_id TEXT PRIMARY KEY, onboarding TEXT, repo TEXT, token TEXT, model TEXT,
+     git_author_name TEXT, git_author_email TEXT,
      pod_name TEXT, session_id TEXT, last_activity INTEGER NOT NULL
    )`,
 );
+// Additive migration for registries created before the git-identity columns:
+// CREATE TABLE IF NOT EXISTS leaves an existing table untouched, so the new
+// columns are added here (a duplicate-column error on a fresh DB is expected
+// and ignored).
+for (const stmt of [
+  `ALTER TABLE rooms ADD COLUMN git_author_name TEXT`,
+  `ALTER TABLE rooms ADD COLUMN git_author_email TEXT`,
+]) {
+  try {
+    db.exec(stmt);
+  } catch {
+    // column already exists
+  }
+}
 
 const rooms = new Map<string, Room>();
 for (const row of db.prepare(`SELECT * FROM rooms`).all() as any[]) {
@@ -37,6 +56,8 @@ for (const row of db.prepare(`SELECT * FROM rooms`).all() as any[]) {
     repo: row.repo ?? undefined,
     token: row.token ?? undefined,
     model: row.model ?? undefined,
+    gitAuthorName: row.git_author_name ?? undefined,
+    gitAuthorEmail: row.git_author_email ?? undefined,
     podName: row.pod_name ?? undefined,
     sessionId: row.session_id ?? undefined,
     lastActivity: row.last_activity,
@@ -45,10 +66,11 @@ for (const row of db.prepare(`SELECT * FROM rooms`).all() as any[]) {
 
 function persist(r: Room) {
   db.prepare(
-    `INSERT INTO rooms (room_id, onboarding, repo, token, model, pod_name, session_id, last_activity)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO rooms (room_id, onboarding, repo, token, model, git_author_name, git_author_email, pod_name, session_id, last_activity)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(room_id) DO UPDATE SET onboarding=excluded.onboarding, repo=excluded.repo,
-       token=excluded.token, model=excluded.model, pod_name=excluded.pod_name,
+       token=excluded.token, model=excluded.model, git_author_name=excluded.git_author_name,
+       git_author_email=excluded.git_author_email, pod_name=excluded.pod_name,
        session_id=excluded.session_id, last_activity=excluded.last_activity`,
   ).run(
     r.roomId,
@@ -56,6 +78,8 @@ function persist(r: Room) {
     r.repo ?? null,
     r.token ?? null,
     r.model ?? null,
+    r.gitAuthorName ?? null,
+    r.gitAuthorEmail ?? null,
     r.podName ?? null,
     r.sessionId ?? null,
     r.lastActivity,

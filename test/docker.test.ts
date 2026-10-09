@@ -49,6 +49,18 @@ test("envFileContent round-trips through parseEnvFile", () => {
   assert.deepEqual(parseEnvFile(envFileContent(values)), values);
 });
 
+test("envFileContent carries the optional git identity overrides", () => {
+  const values = {
+    REPO: "owner/name",
+    GH_TOKEN: "t",
+    OPENCODE_SERVER_PASSWORD: "p",
+    OPENROUTER_API_KEY: "k",
+    GIT_USER_NAME: "Alice Dev",
+    GIT_USER_EMAIL: "alice@example.org",
+  };
+  assert.deepEqual(parseEnvFile(envFileContent(values)), values);
+});
+
 test("inspect state -> RoomPodState mapping mirrors k8s.ts semantics", () => {
   assert.equal(inspectStateToRoomPodState(undefined), "gone");
   assert.equal(inspectStateToRoomPodState({ Status: "running", Running: true }), "running");

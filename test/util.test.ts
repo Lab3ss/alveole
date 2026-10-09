@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseRepo, describeError, formatUsage, splitForMatrix, resolveCryptoStorePath } from "../src/util.ts";
+import { parseRepo, describeError, formatUsage, splitForMatrix, resolveCryptoStorePath, shellQuote } from "../src/util.ts";
 
 test("parseRepo accepts owner/name", () => {
   assert.equal(parseRepo("lab3ss/alveole"), "lab3ss/alveole");
@@ -48,6 +48,12 @@ test("formatUsage says n/a when the model doesn't report cost", () => {
 
 test("splitForMatrix keeps short text intact", () => {
   assert.deepEqual(splitForMatrix("hello"), ["hello"]);
+});
+
+test("shellQuote wraps a value safely, escaping embedded single quotes", () => {
+  assert.equal(shellQuote("Alice Dev"), "'Alice Dev'");
+  assert.equal(shellQuote("O'Brien"), "'O'\\''Brien'");
+  assert.equal(shellQuote("$(rm -rf /)"), "'$(rm -rf /)'");
 });
 
 test("splitForMatrix splits on line boundaries and preserves content", () => {

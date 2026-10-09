@@ -19,6 +19,7 @@ const calls = {
   teardown: [] as string[],
   respond: [] as boolean[],
   questionAnswers: [] as string[][][],
+  shell: [] as string[],
   sent: [] as string[],
   aborted: 0,
   redacted: 0,
@@ -116,6 +117,10 @@ const fakeWorkspace: WorkspaceService = {
     Effect.sync(() => {
       calls.questionAnswers.push(answers);
     }),
+  runShell: (_b, _p, _s, command) =>
+    Effect.sync(() => {
+      calls.shell.push(command);
+    }),
   watch: (_b, _p, handlers) =>
     Effect.sync(() => {
       watchHandlers = handlers;
@@ -193,6 +198,7 @@ const reset = () => {
   calls.teardown.length = 0;
   calls.respond.length = 0;
   calls.questionAnswers.length = 0;
+  calls.shell.length = 0;
   calls.sent.length = 0;
   calls.aborted = 0;
   calls.redacted = 0;
@@ -417,6 +423,49 @@ test("/model updates per-message routing without touching the pod", async () => 
   assert.equal(rooms.get("!t6")?.model, "openai/gpt-5.2");
   assert.equal(calls.provision.length, 1); // onboarding provisioned once; /model must not re-provision
   assert.ok(recorded.some((r) => r.event.type === "info" && r.event.text.includes("Model set to")));
+});
+
+test("/git-name and /git-email override the identity and rewrite the live runner's git config", async () => {
+  reset();
+  await onboard("!git1");
+  await run({ conversationId: "!git1", text: "/git-name Alice Dev" });
+  assert.equal(rooms.get("!git1")?.gitAuthorName, "Alice Dev");
+  await run({ conversationId: "!git1", text: "/git-email alice@example.org" });
+  assert.equal(rooms.get("!git1")?.gitAuthorEmail, "alice@example.org");
+  // Applied live via opencode's shell endpoint (no re-provision), shell-quoted.
+  assert.equal(calls.shell.length, 2);
+  assert.ok(calls.shell[0].includes("git config --global user.name 'Alice Dev'"));
+  assert.ok(calls.shell[1].includes("git config --global user.email 'alice@example.org'"));
+  assert.equal(calls.provision.length, 1);
+  assert.ok(recorded.some((r) => r.event.type === "info" && r.event.text.includes("Takes effect now")));
+});
+
+test("/git-name with no argument reports that no override is set", async () => {
+  reset();
+  await onboard("!git2");
+  await run({ conversationId: "!git2", text: "/git-name" });
+  assert.ok(recorded.some((r) => r.event.type === "info" && r.event.text.includes("No git author name override")));
+  assert.equal(calls.shell.length, 0);
+});
+
+test("/git-email rejects a malformed address without touching the runner", async () => {
+  reset();
+  await onboard("!git3");
+  await run({ conversationId: "!git3", text: "/git-email not-an-email" });
+  assert.equal(rooms.get("!git3")?.gitAuthorEmail, undefined);
+  assert.equal(calls.shell.length, 0);
+  assert.ok(recorded.some((r) => r.event.type === "info" && r.event.text.includes("doesn't look like an email")));
+});
+
+test("git-identity changes are remembered when no runner is live (applied on next provision)", async () => {
+  reset();
+  await onboard("!git4");
+  // Tear down the runner but keep the registry row (repo/token/model survive).
+  await run({ conversationId: "!git4", text: "/stop" });
+  await run({ conversationId: "!git4", text: "/git-name Bob" });
+  assert.equal(rooms.get("!git4")?.gitAuthorName, "Bob");
+  assert.equal(calls.shell.length, 0); // nothing live to apply to
+  assert.ok(recorded.some((r) => r.event.type === "info" && r.event.text.includes("next provisions")));
 });
 
 test("broken input during onboarding re-asks instead of provisioning", async () => {

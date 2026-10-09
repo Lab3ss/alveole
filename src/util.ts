@@ -75,3 +75,12 @@ export function splitForMatrix(text: string, chunkSize = 3000): string[] {
   if (rest) chunks.push(rest);
   return chunks;
 }
+
+/**
+ * Single-quote a value for POSIX sh so it reaches git as one argv even when it
+ * contains spaces or quotes (e.g. a git author name: `git config --global
+ * user.name 'Jean-Marc « JM »'`).
+ */
+export function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}

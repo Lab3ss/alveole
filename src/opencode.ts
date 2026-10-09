@@ -281,6 +281,21 @@ export async function answerQuestion(
   });
 }
 
+/**
+ * Runs one shell command inside the room's workspace via
+ * `POST /session/:id/shell` (opencode 1.18.32: body `{ agent, model?, command }`,
+ * returns the created message). Used by `/git-name` / `/git-email` to rewrite
+ * the live runner's global git config without tearing it down; the command is
+ * appended to the session's history, which is acceptable for these rare,
+ * explicit user actions.
+ */
+export async function runShell(baseUrl: string, password: string, sessionId: string, command: string): Promise<void> {
+  await req(baseUrl, password, `/session/${sessionId}/shell`, {
+    method: "POST",
+    body: JSON.stringify({ agent: "build", command }),
+  });
+}
+
 export type PermissionRequest = { sessionId: string; permissionId: string; description: string };
 export type ToolProgress = { sessionId: string; title: string };
 export type SessionError = { sessionId?: string; message: string };

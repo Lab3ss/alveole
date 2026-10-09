@@ -29,6 +29,48 @@ if [ -n "${AGENT_RULES:-}" ]; then
     > /home/node/.config/opencode/opencode.json
 fi
 
+# Git commit identity. Resolved once at boot and written as GLOBAL git config —
+# deliberately NOT exported as GIT_AUTHOR_*/GIT_COMMITTER_* env vars, which
+# would shadow any later in-place override (`/git-name`, `/git-email` rewrite
+# the config through the opencode shell during the room's lifetime). Priority:
+# an explicit broker override (GIT_USER_NAME/GIT_USER_EMAIL, set per room via
+# those commands) > the GitHub account behind GH_TOKEN > a neutral fallback.
+# GitHub's email is often null (private), so we fall back to the account's
+# noreply address, which still attributes commits to the account.
+echo "[runner] resolving git identity..."
+node -e '
+const { execFileSync } = require("node:child_process");
+(async () => {
+  let name = process.env.GIT_USER_NAME || "";
+  let email = process.env.GIT_USER_EMAIL || "";
+  if (!name || !email) {
+    try {
+      const res = await fetch("https://api.github.com/user", {
+        headers: {
+          Authorization: "Bearer " + process.env.GH_TOKEN,
+          Accept: "application/vnd.github+json",
+          "User-Agent": "alveole-runner",
+        },
+      });
+      if (res.ok) {
+        const u = await res.json();
+        name = name || u.name || u.login || "";
+        email = email || u.email || (u.id && u.login ? u.id + "+" + u.login + "@users.noreply.github.com" : "");
+      } else {
+        console.error("[runner] github identity lookup: HTTP " + res.status);
+      }
+    } catch (err) {
+      console.error("[runner] github identity lookup failed: " + (err && err.message ? err.message : err));
+    }
+  }
+  name = name || "Alveole Agent";
+  email = email || "alveole-agent@users.noreply.github.com";
+  execFileSync("git", ["config", "--global", "user.name", name]);
+  execFileSync("git", ["config", "--global", "user.email", email]);
+  console.log("[runner] git identity: " + name + " <" + email + ">");
+})();
+'
+
 WORKDIR=/home/node/workspace
 echo "[runner] cloning ${REPO}..."
 git clone --depth 1 "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" "$WORKDIR"

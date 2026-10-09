@@ -9,9 +9,12 @@ FROM node:22-bookworm-slim
 # behavior/APIs between otherwise identical deployments). Bump deliberately.
 ARG OPENCODE_VERSION=1.18.32
 
+# git for the repo; gh so the agent can do GitHub operations (PRs/issues)
+# directly — it authenticates non-interactively from the GH_TOKEN env var the
+# broker injects, no `gh auth login` needed. ca-certificates for TLS.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends git ca-certificates \
- && rm -rf /var/lib/apt/lists/*
+  && apt-get install -y --no-install-recommends git ca-certificates gh \
+  && rm -rf /var/lib/apt/lists/*
 
 RUN npm install -g --no-fund --no-audit "opencode-ai@${OPENCODE_VERSION}"
 
