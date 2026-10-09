@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { roomResourceName } from "../src/k8s.ts";
+import { roomResourceName } from "../../../src/agents/coding/k8s.ts";
 
 test("roomResourceName is DNS-safe and <=63 chars", () => {
   const name = roomResourceName("! projeté très très long ".repeat(5) + "🔥");

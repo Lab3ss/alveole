@@ -4,7 +4,7 @@
  * which. Method bodies are sync (node:sqlite) and never fail at the type level.
  */
 import { Context, Layer } from "effect";
-import { deleteRoom, getRoom, idleRooms, newRoom, saveRoom, touch, type Room } from "../registry.ts";
+import { deleteRoom, getRoom, idleRooms, newRoom, saveRoom, touch, type Room } from "./registry.ts";
 
 export type { Room };
 

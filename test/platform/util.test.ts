@@ -1,6 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseRepo, describeError, formatUsage, splitForMatrix, resolveCryptoStorePath, shellQuote } from "../src/util.ts";
+import { describeError, resolveCryptoStorePath } from "../../src/platform/util.ts";
+import { parseRepo, formatUsage, shellQuote } from "../../src/agents/coding/util.ts";
+import { splitForMatrix } from "../../src/platform/adapter/matrix.ts";
 
 test("parseRepo accepts owner/name", () => {
   assert.equal(parseRepo("lab3ss/alveole"), "lab3ss/alveole");

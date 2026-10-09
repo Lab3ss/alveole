@@ -11,10 +11,10 @@
 #     reading /data/bot-account.json at startup (src/broker.ts).
 #
 # Per-room runner containers and their networks are created at RUNTIME by the
-# broker's compose driver (src/docker.ts) on the mounted docker socket — they
+# broker's compose driver (src/agents/coding/docker.ts) on the mounted docker socket — they
 # are deliberately not compose services, so `docker compose down` leaves live
 # rooms alone (the broker re-attaches to their networks lazily on its next
-# workspace call; see src/core/workspace.ts).
+# workspace call; see src/agents/coding/workspace.ts).
 
 name: alveole
 
@@ -61,7 +61,7 @@ services:
   # driver launches. Build it once before `up`:
   #   docker compose --profile build build runner-image
   runner-image:
-    build: ../runner
+    build: ../src/agents/coding/runner
     image: ${RUNNER_IMAGE:-alveole-runner:local}
     profiles:
       - build

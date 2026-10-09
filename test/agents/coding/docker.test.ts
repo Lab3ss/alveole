@@ -15,7 +15,7 @@ process.env.ROOMS_ENV_DIR = await mkdtemp(path.join(tmpdir(), "alveole-docker-te
 process.env.RUNNER_IMAGE = "alveole-runner:test";
 process.env.BROKER_CONTAINER_NAME = "alveole-broker-test";
 
-const docker = await import("../src/docker.ts");
+const docker = await import("../../../src/agents/coding/docker.ts");
 const { parseEnvFile, envFileContent, inspectStateToRoomPodState, roomNetworkName, roomEnvFilePath, roomResourceName, readRoomPodState, waitForRunning, getRoomServerPassword, provisionRoom, teardownRoom, setDockerExecForTests } = docker;
 
 test("roomResourceName re-export is a valid docker container name", () => {

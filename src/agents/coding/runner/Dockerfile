@@ -1,7 +1,7 @@
 # Room runner — one ephemeral pod per Matrix room, no persistent storage.
 # Clones the room's repo (GH_TOKEN from env, supplied at onboarding, never
 # baked into the image) and runs a headless opencode server on the room's
-# chosen model/provider; the broker drives it over HTTP (see src/opencode.ts).
+# chosen model/provider; the broker drives it over HTTP (see src/agents/coding/opencode.ts).
 FROM node:22-bookworm-slim
 
 # Pin the opencode version: an unpinned `npm install -g opencode-ai` makes
@@ -24,7 +24,7 @@ RUN chmod +x /entrypoint.sh && chown node:node /entrypoint.sh
 # Permission/maxSteps defaults as opencode's global config. The agent's channel
 # rules are NOT baked here: the broker is the single source of truth and injects
 # them as AGENT_RULES, which entrypoint.sh installs at runtime (see
-# src/adapter/matrix.ts's channelRules).
+# src/platform/adapter/matrix.ts's formatting rules).
 COPY opencode.json /home/node/.config/opencode/opencode.json
 # chown the directory itself, not just the file: entrypoint.sh writes
 # channel-rules.md and a rules-referencing opencode.json into it at runtime as

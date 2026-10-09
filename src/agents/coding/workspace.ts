@@ -16,13 +16,13 @@
  * room's Secret at provision time.
  */
 import { Context, Effect, Layer } from "effect";
-import * as docker from "../docker.ts";
-import * as k8s from "../k8s.ts";
-import * as opencode from "../opencode.ts";
-import { describeError } from "../util.ts";
+import * as docker from "./docker.ts";
+import * as k8s from "./k8s.ts";
+import * as opencode from "./opencode.ts";
+import { describeError } from "../../platform/util.ts";
 
-export type { RoomPodState, RoomEnv } from "../k8s.ts";
-export type { SessionUsage, PermissionRequest, ToolProgress, SessionError, SessionCostUpdate, QuestionAsk } from "../opencode.ts";
+export type { RoomPodState, RoomEnv } from "./k8s.ts";
+export type { SessionUsage, PermissionRequest, ToolProgress, SessionError, SessionCostUpdate, QuestionAsk } from "./opencode.ts";
 
 /** Stable failure codes for the workspace seam. Raw causes are logged where
  * they happen (see `failing`), never propagated. */
