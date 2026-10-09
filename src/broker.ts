@@ -88,6 +88,9 @@ const orchestratorConfig = {
   turnWatchdogMs: parseFloat(process.env.TURN_WATCHDOG_MINUTES ?? "15") * 60_000,
   turnMaxMs: parseFloat(process.env.TURN_MAX_HOURS ?? "4") * 3600_000,
   sessionCostCapUsd: parseFloat(process.env.SESSION_COST_CAP_USD ?? "10"),
+  // Every newly onboarded room starts on this OpenRouter model; a user can
+  // override it per room with /model. See .env.example.
+  defaultModel: process.env.DEFAULT_CODING_AGENT_MODEL ?? "deepseek/deepseek-v4.1-flash",
 };
 
 const AppLayer = OrchestratorLive(orchestratorConfig).pipe(

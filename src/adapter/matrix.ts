@@ -118,7 +118,7 @@ export function isBotMentioned(me: string, content: any): boolean {
 
 /**
  * Removes a leading mention token from a message so anchored parsers (slash
- * commands, onboarding repo/token/model, yes/no approval answers) still see
+ * commands, onboarding repo/token, yes/no approval answers) still see
  * the actual payload — while the raw text keeps the mention for the agent.
  * Element puts the mention first and, when it emits `m.mentions`, renders the
  * bot's display name in the body; older clients leave the literal `@localpart`
@@ -159,8 +159,8 @@ function render(event: OutboundEvent): string {
       return "🗜️ Context got compacted (older history was trimmed to make room).";
     case "token-received":
       return event.redacted
-        ? "Got it (and removed from history)\n. Which model? `deepseek/deepseek-v4.1-flash`, `anthropic/claude-sonnet-4.5`, or any OpenRouter model id, see openrouter.ai/models"
-        : "Got it. ⚠️ I couldn't remove that message from history (I need moderator power level in this room to redact it) — make me a moderator if you want that.\nWhich model? `deepseek/deepseek-v4.1-flash`, `anthropic/claude-sonnet-4.5`, or any OpenRouter model id, see openrouter.ai/models";
+        ? "Got it (and removed from history)."
+        : "Got it. ⚠️ I couldn't remove that message from history (I need moderator power level in this room to redact it) — make me a moderator if you want that.";
     case "teardown":
       return `🛑 Stopped (${event.reason}). ${event.repo} is still remembered — send a message to resume.`;
   }
@@ -226,6 +226,7 @@ const makeMatrixAdapter = (config: MatrixAdapterConfig): Effect.Effect<ChatAdapt
       markdown: false,
       maxMessageChars: 3000,
       canRedact: true,
+      selfMention: me.split(":")[0], // e.g. "@coding-agent"
       agentRules: channelRules(me.split(":")[0]),
     };
 

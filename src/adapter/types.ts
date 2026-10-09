@@ -23,6 +23,10 @@ export type ChannelCapabilities = {
   readonly maxMessageChars: number;
   /** Whether the adapter can delete/redact a user's message (PAT scrubbing). */
   readonly canRedact: boolean;
+  /** The bot's own mention handle (e.g. "@coding-agent") when the channel has
+   * one, so core-composed hints can show users exactly how to address it.
+   * undefined = the core falls back to a generic placeholder. */
+  readonly selfMention?: string;
   /** Formatting rules injected into the room's runner pod as AGENT_RULES (the
    * broker is their single source of truth). undefined = inject nothing; the
    * runner keeps its baked permission config but gets no channel rules. */

@@ -28,7 +28,7 @@ const calls = {
 let watchHandlers: WatchHandlers | undefined;
 
 const fakeAdapter: ChatAdapterService = {
-  capabilities: { markdown: false, maxMessageChars: 3000, canRedact: true, agentRules: "FAKE-CHANNEL-RULES" },
+  capabilities: { markdown: false, maxMessageChars: 3000, canRedact: true, selfMention: "@coding-agent", agentRules: "FAKE-CHANNEL-RULES" },
   start: () => Effect.void,
   send: (conversationId, event) =>
     Effect.sync(() => {
@@ -129,9 +129,11 @@ const layers = Layer.mergeAll(
   Layer.effect(Workspace, Effect.succeed(fakeWorkspace)),
 );
 
+const DEFAULT_MODEL = "deepseek/deepseek-v4.1-flash";
+
 const runtime = ManagedRuntime.make(
   Layer.provide(
-    OrchestratorLive({ idleTeardownMs: 3600_000, sweepIntervalMs: 60_000, turnWatchdogMs: 0, turnMaxMs: 0, sessionCostCapUsd: 0 }),
+    OrchestratorLive({ idleTeardownMs: 3600_000, sweepIntervalMs: 60_000, turnWatchdogMs: 0, turnMaxMs: 0, sessionCostCapUsd: 0, defaultModel: DEFAULT_MODEL }),
     layers,
   ),
 );
@@ -144,7 +146,7 @@ const createdRuntimes: Array<ManagedRuntime.ManagedRuntime<any, any>> = [];
 const guardrailOrchestrator = async (cap: Partial<import("../src/core/orchestrator.ts").OrchestratorConfig>) => {
   const rt = ManagedRuntime.make(
     Layer.provide(
-      OrchestratorLive({ idleTeardownMs: 3600_000, sweepIntervalMs: 60_000, turnWatchdogMs: 0, turnMaxMs: 0, sessionCostCapUsd: 0, ...cap }),
+      OrchestratorLive({ idleTeardownMs: 3600_000, sweepIntervalMs: 60_000, turnWatchdogMs: 0, turnMaxMs: 0, sessionCostCapUsd: 0, defaultModel: DEFAULT_MODEL, ...cap }),
       layers,
     ),
   );
@@ -204,14 +206,14 @@ const reset = () => {
 };
 
 /** Full onboarding flow for one conversation — needed because reset() clears
- * the fake registry; every test must set up its own room. */
+ * the fake registry; every test must set up its own room. Two steps now: repo,
+ * then token (the model is the configured default, no longer asked). */
 const onboard = async (id = "!t1", runner: (m: TestMsg) => Promise<void> = run) => {
   await runner({ conversationId: id, text: "lab3ss/alveole" });
   await runner({ conversationId: id, text: "ghp_token1234567", messageId: "$m1" });
-  await runner({ conversationId: id, text: "anthropic/claude-sonnet-4.5" });
 };
 
-test("onboarding collects repo → token → model, then provisions the workspace", async () => {
+test("onboarding collects repo → token, then provisions on the default model", async () => {
   reset();
   await run({ conversationId: "!t1", text: "lab3ss/alveole" });
   assert.equal(rooms.get("!t1")?.onboarding, "token");
@@ -219,11 +221,9 @@ test("onboarding collects repo → token → model, then provisions the workspac
 
   await run({ conversationId: "!t1", text: "ghp_token1234567", messageId: "$m1" });
   assert.equal(rooms.get("!t1")?.token, "ghp_token1234567");
-  assert.equal(rooms.get("!t1")?.onboarding, "model");
+  assert.equal(rooms.get("!t1")?.onboarding, undefined); // done: no model question
+  assert.equal(rooms.get("!t1")?.model, DEFAULT_MODEL); // default injected
   assert.equal(calls.redacted, 1); // PAT scrubbed via the adapter capability
-
-  await run({ conversationId: "!t1", text: "anthropic/claude-sonnet-4.5" });
-  assert.equal(rooms.get("!t1")?.model, "anthropic/claude-sonnet-4.5");
   assert.equal(rooms.get("!t1")?.podName, "room-test-t1");
   assert.equal(rooms.get("!t1")?.sessionId, "ses1");
   assert.equal(calls.provision.length, 1);
@@ -232,6 +232,9 @@ test("onboarding collects repo → token → model, then provisions the workspac
   const last = recorded[recorded.length - 1];
   assert.equal(last.event.type, "info");
   assert.ok(last.event.type === "info" && last.event.text.includes("Ready"));
+  // The setup message names the default model and how to override it.
+  assert.ok(last.event.type === "info" && last.event.text.includes(DEFAULT_MODEL));
+  assert.ok(last.event.type === "info" && last.event.text.includes("@coding-agent /model"));
 });
 
 test("steady-state task: prompt fired, room busy, SSE idle relays the result and releases the room", async () => {
@@ -426,9 +429,8 @@ test("broken input during onboarding re-asks instead of provisioning", async () 
 test("onboarding provision failure surfaces the typed code in the room", async () => {
   reset();
   await run({ conversationId: "!t8", text: "lab3ss/alveole" });
-  await run({ conversationId: "!t8", text: "ghp_token1234567", messageId: "$m1" });
   failures.provision = { code: "provision-failed", details: "boom" };
-  await run({ conversationId: "!t8", text: "anthropic/claude-sonnet-4.5" });
+  await run({ conversationId: "!t8", text: "ghp_token1234567", messageId: "$m1" });
   const err = recorded.find((r) => r.event.type === "error");
   assert.ok(err);
   assert.equal(err.event.type === "error" && err.event.text, "setup failed: provision-failed — boom");

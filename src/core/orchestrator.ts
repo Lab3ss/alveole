@@ -39,10 +39,9 @@ const ROOMS_NAMESPACE = process.env.ROOMS_NAMESPACE ?? "alveole-rooms";
 /** The onboarding opener — sent proactively on join (see greet) and re-sent
  * when a room still at the repo step sends something that isn't a repo. */
 const REPO_PROMPT =
-  "Let's get this workspace set up in three quick steps:\n\n" +
+  "Let's get this workspace set up in two quick steps:\n\n" +
   "1. Send the repo I should work on — `owner/name` or a GitHub URL.\n" +
-  "2. Send a GitHub PAT scoped to that repo — it stays only inside this room's isolated workspace.\n" +
-  "3. Pick an Openrouter model.\n\n" +
+  "2. Send a GitHub PAT scoped to that repo — it stays only inside this room's isolated workspace.\n\n" +
   "Let's start with step 1: what repo should I work on?\n\n" +
   "(I only act when you @-mention me — include that in every message you send me.)";
 
@@ -61,6 +60,9 @@ export type OrchestratorConfig = {
    * only cost signal the SSE stream carries) reaches this many USD — the
    * circuit-breaker against an agent looping and burning tokens. 0 disables. */
   readonly sessionCostCapUsd: number;
+  /** OpenRouter model every newly onboarded room uses by default — from
+   * DEFAULT_CODING_AGENT_MODEL. A user can override it per room with /model. */
+  readonly defaultModel: string;
 };
 
 export interface OrchestratorService {
@@ -631,12 +633,18 @@ const make = (config: OrchestratorConfig) =>
       );
     };
 
-    const handleOnboardingModel = (room: Room): Effect.Effect<void> =>
+    const handleOnboardingComplete = (room: Room): Effect.Effect<void> =>
       Effect.gen(function* () {
         busyRooms.add(room.roomId);
         yield* announce(room, `Setting up ${room.repo}…`);
         yield* ensureProvisioned(room);
-        yield* send(room.roomId, { type: "info", text: "✅ Ready. What would you like me to do?" });
+        yield* send(room.roomId, {
+          type: "info",
+          text:
+            `✅ Ready. I'm using the \`${room.model}\` model by default — change it anytime with ` +
+            `\`${adapter.capabilities.selfMention ?? "@coding-agent"} /model <openrouter_model>\`.\n\n` +
+            "What would you like me to do?",
+        });
       }).pipe(
         Effect.catchAll((failure) => send(room.roomId, errorEvent(failure, "setup failed"))),
         Effect.ensuring(Effect.sync(() => busyRooms.delete(room.roomId))),
@@ -815,7 +823,10 @@ const make = (config: OrchestratorConfig) =>
             return;
           }
           room.token = body;
-          room.onboarding = "model";
+          // No model question: every room starts on the default injected via
+          // DEFAULT_CODING_AGENT_MODEL and can override per room with /model.
+          room.model = config.defaultModel;
+          room.onboarding = undefined;
           registry.save(room);
           // Best-effort: strip the PAT out of chat history right after reading it.
           // Not a security boundary (the platform may retain it briefly, and
@@ -825,14 +836,7 @@ const make = (config: OrchestratorConfig) =>
           // redaction needs moderator power level).
           const redacted = msg.messageId && adapter.capabilities.canRedact ? yield* adapter.redact(roomId, msg.messageId) : false;
           yield* send(roomId, { type: "token-received", redacted });
-          return;
-        }
-
-        if (room.onboarding === "model") {
-          room.model = body;
-          room.onboarding = undefined;
-          registry.save(room);
-          yield* handleOnboardingModel(room);
+          yield* handleOnboardingComplete(room);
           return;
         }
 
@@ -840,6 +844,9 @@ const make = (config: OrchestratorConfig) =>
         // and, if there is anything, hand it to the agent as background ahead
         // of the addressed request. Only a task turn drains it — commands,
         // gate answers and onboarding leave the buffer for the next task.
+        // `??=`: legacy rows written before the default-model flow could lack
+        // one; never fire a task model-less.
+        room.model ??= config.defaultModel;
         const ambient = drainAmbient(room.roomId);
         const prompt = ambient ? withAmbientContext(ambient, raw) : raw;
         if (!prompt.trim()) {

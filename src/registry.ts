@@ -6,10 +6,10 @@
  */
 import { DatabaseSync } from "node:sqlite";
 
-export type OnboardingStep = "repo" | "token" | "model";
+export type OnboardingStep = "repo" | "token";
 export type Room = {
   roomId: string;
-  onboarding?: OnboardingStep; // unset once repo+token+model are all known
+  onboarding?: OnboardingStep; // unset once the repo+token are in (model has a default)
   repo?: string;
   token?: string;
   model?: string;
@@ -30,7 +30,10 @@ const rooms = new Map<string, Room>();
 for (const row of db.prepare(`SELECT * FROM rooms`).all() as any[]) {
   rooms.set(row.room_id, {
     roomId: row.room_id,
-    onboarding: row.onboarding ?? undefined,
+    // Legacy rows could be parked on the removed "model" step (pre-default-model
+    // flow): treat them as fully onboarded — the orchestrator supplies the
+    // default model when it next runs a task.
+    onboarding: row.onboarding === "repo" || row.onboarding === "token" ? row.onboarding : undefined,
     repo: row.repo ?? undefined,
     token: row.token ?? undefined,
     model: row.model ?? undefined,
