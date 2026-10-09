@@ -137,7 +137,7 @@ export function stripMention(body: string, tokens: Array<string | undefined>): s
   return body.replace(re, "").trim();
 }
 
-function render(event: OutboundEvent): string {
+function render(event: OutboundEvent, mention: string): string {
   switch (event.type) {
     case "status":
     case "info":
@@ -148,11 +148,15 @@ function render(event: OutboundEvent): string {
     case "error":
       return `⚠️ ${event.text}`;
     case "approval-request":
-      return `🔐 Approval needed:\n${event.description}\n@-mention me and reply *yes* to allow, anything else to deny. No rush — I'll wait as long as it takes.`;
+      return `🔐 Approval needed:\n${event.description}\nReply *yes* to allow, anything else to deny.\nDon't forget to mention me with ${mention} in your answer.`;
     case "approval-result":
       return event.approved ? "✅ Approved — proceeding." : "🚫 Denied.";
     case "question":
-      return `❓ ${event.description}\n@-mention me with your answer${event.description.includes("\n") ? "s, one per line" : ""}. No rush — I'll wait as long as it takes.`;
+      return (
+        `❓ ${event.description}\n` +
+        (event.description.includes("\n") ? "Send your answers one per line.\n" : "") +
+        `Don't forget to mention me with ${mention} in your answer.`
+      );
     case "cost-alert":
       return `💸 ~$${event.stepUsd} spent so far this session. Send /usage for the full breakdown.`;
     case "compacted":
@@ -222,17 +226,18 @@ const makeMatrixAdapter = (config: MatrixAdapterConfig): Effect.Effect<ChatAdapt
 
     const seenEventIds = new Set<string>();
 
+    const botMention = me.split(":")[0]; // e.g. "@coding-agent"
     const capabilities: ChannelCapabilities = {
       markdown: false,
       maxMessageChars: 3000,
       canRedact: true,
-      selfMention: me.split(":")[0], // e.g. "@coding-agent"
-      agentRules: channelRules(me.split(":")[0]),
+      selfMention: botMention,
+      agentRules: channelRules(botMention),
     };
 
     const send = (conversationId: string, event: OutboundEvent): Effect.Effect<void> =>
       Effect.gen(function* () {
-        const text = render(event);
+        const text = render(event, botMention);
         console.log(`[${conversationId}] → ${event.type}`);
         for (const part of splitForMatrix(text, capabilities.maxMessageChars)) {
           yield* Effect.tryPromise(() => client.sendText(conversationId, part));
