@@ -71,3 +71,16 @@ test("an agent never imports another agent", async () => {
   }
   assert.deepEqual(offenders, [], `an agent must not import another:\n${offenders.join("\n")}`);
 });
+
+test("an agent never imports a concrete adapter (only platform/adapter/types.ts)", async () => {
+  const offenders: string[] = [];
+  for (const file of await tsFiles(path.join(SRC, "agents"))) {
+    for (const spec of relativeImports(await readFile(file, "utf8"))) {
+      const resolved = path.resolve(path.dirname(file), spec);
+      if (isInside(resolved, path.join(SRC, "platform", "adapter")) && !resolved.endsWith(path.join("adapter", "types.ts"))) {
+        offenders.push(`${path.relative(SRC, file)} -> ${spec}`);
+      }
+    }
+  }
+  assert.deepEqual(offenders, [], `agents may only import the adapter contract:\n${offenders.join("\n")}`);
+});

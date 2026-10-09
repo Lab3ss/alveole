@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { isBotMentioned, stripMention } from "../../../src/platform/adapter/matrix.ts";
+import { channelRulesFor } from "../../../src/platform/channel-rules.ts";
 import { codingAgentRules } from "../../../src/agents/coding/rules.ts";
 
 const ME = "@coding-agent:matrix.example.org";
@@ -35,7 +36,7 @@ test("stripMention leaves an unmatched message untouched", () => {
 });
 
 test("codingAgentRules names the bot's own handle", () => {
-  const rules = codingAgentRules("@coding-agent");
+  const rules = codingAgentRules(channelRulesFor("@coding-agent"));
   assert.ok(rules.includes("@coding-agent"));
   assert.ok(rules.includes("only act when addressed"));
 });

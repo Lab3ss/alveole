@@ -20,7 +20,7 @@
  * (override that directory).
  */
 import { Effect, Layer, ManagedRuntime } from "effect";
-import { CodingAgentLive, RegistryLive, WorkspaceLive, codingAgentRules, codingConfigFromEnv } from "./agents/coding/index.ts";
+import { CodingAgentLive, RegistryLive, WorkspaceLive, codingConfigFromEnv } from "./agents/coding/index.ts";
 import { MatrixAdapterLive } from "./platform/adapter/matrix.ts";
 import { Agent, startAgent } from "./platform/agent.ts";
 import { cryptoStorePath, resolveMatrixCredentials } from "./platform/boot.ts";
@@ -33,26 +33,24 @@ if (!openrouterKey) throw new Error("OPENROUTER_API_KEY required");
 const cryptoStoragePath = cryptoStorePath();
 const codingConfig = codingConfigFromEnv();
 
-// The one place an agent is chosen. A second agent is a new agents/<name>/
-// folder and a different Live layer here; the platform is untouched.
 const AdapterLive = MatrixAdapterLive({
   homeserver,
   token,
   storagePath: "bot-state.json",
   cryptoStoragePath,
-  agentRules: codingAgentRules,
 });
 
+// The one place an agent is chosen. A second agent is a new agents/<name>/
+// folder and a different Live layer here; the platform is untouched.
+// provideMerge: the one Matrix client is built once and exposed next to the
+// agent, so startAgent (which reads ChatAdapter from context) shares it.
 const AgentLayer = CodingAgentLive(codingConfig).pipe(
   Layer.provide(RegistryLive),
   Layer.provide(WorkspaceLive({ openrouterKey })),
-  Layer.provide(AdapterLive),
+  Layer.provideMerge(AdapterLive),
 );
 
-// The adapter is exposed alongside the agent so the composition root can hand
-// it to startAgent (which reads ChatAdapter from context). Effect memoizes the
-// shared AdapterLive, so there is exactly one Matrix client.
-const runtime = ManagedRuntime.make(Layer.merge(AgentLayer, AdapterLive));
+const runtime = ManagedRuntime.make(AgentLayer);
 
 await runtime
   .runPromise(

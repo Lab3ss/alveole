@@ -14,3 +14,4 @@ registry.db-*
 registry-*.db
 registry-*.db-*
 *.log
+src/agents/*/runner

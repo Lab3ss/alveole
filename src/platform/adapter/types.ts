@@ -1,17 +1,18 @@
 /**
- * Transport-neutral contract between the chat layer and the broker core.
+ * Transport-neutral contract between the chat layer and the agents.
  *
  * A ChatAdapter is the ONLY place that knows about a specific chat platform
  * (Matrix today, someday Telegram/Slack/...): platform filters (msgtype,
  * timestamps, sync redelivery dedup), delivery chunking, redaction powers,
- * room labels, and how an approval question is phrased/answered. The
- * orchestrator (src/core/orchestrator.ts) speaks exclusively in these types.
+ * room labels, and the text vocabulary of a yes/no answer. Agents
+ * (src/agents/*) speak exclusively in these types.
  *
  * Conversation ids are adapter-supplied (Matrix roomId today) and opaque to
- * the core; never use transport details (power levels, event shapes) outside
- * an adapter.
+ * agents; never use transport details (power levels, event shapes) outside an
+ * adapter.
  */
 import { Context, Effect } from "effect";
+import type { ChannelRules } from "../channel-rules.ts";
 
 export type ConversationId = string;
 
@@ -27,12 +28,11 @@ export type ChannelCapabilities = {
    * one, so core-composed hints can show users exactly how to address it.
    * undefined = the core falls back to a generic placeholder. */
   readonly selfMention?: string;
-  /** The channel's agent rule document (plain-text formatting plus the
-   * shared-room rule), injected into the room's runner as AGENT_RULES.
-   * The channel composes this from the platform formatting rules and the
-   * agent's persona, so the agent never bakes channel rules into its image.
-   * undefined = inject nothing; the runner keeps its baked config. */
-  readonly formattingRules?: string;
+  /** The channel's rule fragments (plain-text formatting, the shared-room
+   * rule with this bot's handle baked in). Data, not a finished document: the
+   * agent composes its own AGENT_RULES from them plus its persona.
+   * undefined = nothing to inject; the runner keeps its baked config. */
+  readonly channelRules?: ChannelRules;
 };
 
 /** A user message as seen by the core — already filtered/deduped by the adapter. */

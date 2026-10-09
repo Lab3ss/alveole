@@ -22,13 +22,13 @@ export type Room = BaseRoom & {
 };
 
 const columns: readonly RoomColumn<Room>[] = [
-  { column: "onboarding", type: "TEXT", write: (r) => r.onboarding ?? null },
-  { column: "repo", type: "TEXT", write: (r) => r.repo ?? null },
-  { column: "token", type: "TEXT", write: (r) => r.token ?? null },
-  { column: "git_author_name", type: "TEXT", write: (r) => r.gitAuthorName ?? null },
-  { column: "git_author_email", type: "TEXT", write: (r) => r.gitAuthorEmail ?? null },
-  { column: "pod_name", type: "TEXT", write: (r) => r.podName ?? null },
-  { column: "session_id", type: "TEXT", write: (r) => r.sessionId ?? null },
+  { column: "onboarding", type: "TEXT", write: (r) => r.onboarding },
+  { column: "repo", type: "TEXT", write: (r) => r.repo },
+  { column: "token", type: "TEXT", write: (r) => r.token },
+  { column: "git_author_name", type: "TEXT", write: (r) => r.gitAuthorName },
+  { column: "git_author_email", type: "TEXT", write: (r) => r.gitAuthorEmail },
+  { column: "pod_name", type: "TEXT", write: (r) => r.podName },
+  { column: "session_id", type: "TEXT", write: (r) => r.sessionId },
 ];
 
 const str = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);

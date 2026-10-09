@@ -22,11 +22,10 @@ export type BaseRoom = {
 export type RoomColumn<Row extends BaseRoom> = {
   readonly column: string;
   readonly type: string;
-  readonly write: (room: Row) => string | number | null | undefined;
+  readonly write: (room: Row) => string | number | null | undefined; // undefined is stored as NULL
 };
 
 export interface BaseRegistry<Row extends BaseRoom> {
-  readonly all: () => Row[];
   readonly get: (roomId: string) => Row | undefined;
   readonly create: (roomId: string) => Row;
   readonly save: (room: Row) => void;
@@ -95,7 +94,6 @@ export function createBaseRegistry<Row extends BaseRoom>(opts: {
   };
 
   return {
-    all: () => [...rooms.values()],
     get: (roomId) => rooms.get(roomId),
     create: (roomId) => {
       const r = opts.create(roomId);

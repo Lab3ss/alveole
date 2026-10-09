@@ -1,23 +1,18 @@
 /**
- * The coding agent's persona rules and the composition of the full AGENT_RULES
- * document. The platform supplies the shared-room gate (Rule 0) and the
- * plain-text formatting rules (Rule 1); this agent prepends the preamble and
- * appends its co-pilot/challenge persona (Rules 2–3).
+ * The coding agent's persona rules and the composition of its AGENT_RULES
+ * document. The channel supplies the fragments it owns (preamble, shared-room
+ * rule, plain-text formatting — see platform/channel-rules.ts, handed over as
+ * data on ChannelCapabilities.channelRules); this agent adds its precedence
+ * clause over repo conventions and its co-pilot/challenge persona (Rules 2–3).
  *
- * The composition root passes `codingAgentRules` to the Matrix adapter, which
- * injects the result into each room's runner pod as AGENT_RULES.
+ * The orchestrator injects the result into each room's runner pod as
+ * AGENT_RULES.
  */
-import { formattingRules, sharedRoomRule } from "../../platform/adapter/matrix.ts";
+import type { ChannelRules } from "../../platform/channel-rules.ts";
 
-export const RULES_HEADER = `# Chat output rules
-
-These rules apply to every session in this deployment, on every response.
-Your responses are relayed verbatim into a plain-text chat channel read on a
-phone. Chat clients render plain text only: markdown is NOT rendered —
-asterisks, hashes, pipes, and backticks appear as raw characters, and markdown
-tables are especially unreadable.
-
-This takes precedence over any formatting or communication conventions found
+/** Repo-specific: the agent works inside a repo that may carry its own
+ * AGENTS.md / README conventions. */
+export const REPO_PRECEDENCE = `This takes precedence over any formatting or communication conventions found
 in the repo's own AGENTS.md or README.
 
 `;
@@ -49,6 +44,6 @@ Have an opinion, but always back it up with arguments.
 - If they confirm their choice after hearing you out, do the work without
   relitigating it.`;
 
-/** The full channel-rules document for a given mention handle. */
-export const codingAgentRules = (mention: string): string =>
-  RULES_HEADER + sharedRoomRule(mention) + formattingRules + CODING_PERSONA;
+/** The full AGENT_RULES document, composed from the channel's fragments. */
+export const codingAgentRules = (channel: ChannelRules): string =>
+  channel.preamble + REPO_PRECEDENCE + channel.sharedRoom + channel.formatting + CODING_PERSONA;

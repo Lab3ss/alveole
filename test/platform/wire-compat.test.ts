@@ -8,6 +8,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { renderOutbound } from "../../src/platform/adapter/matrix.ts";
 import { codingAgentRules } from "../../src/agents/coding/rules.ts";
+import { channelRulesFor } from "../../src/platform/channel-rules.ts";
 import * as present from "../../src/agents/coding/present.ts";
 
 const MENTION = "@coding-agent";
@@ -17,7 +18,7 @@ const OLD_RULES_LEN = 2514;
 const OLD_RULES_SHA256 = "c802296ed12969bb00bf38105b098c690506e5ce5c5b8bef6f66f62d57e85aea";
 
 test("composed AGENT_RULES is byte-identical to the pre-split document", () => {
-  const rules = codingAgentRules(MENTION);
+  const rules = codingAgentRules(channelRulesFor(MENTION));
   assert.equal(rules.length, OLD_RULES_LEN);
   assert.equal(createHash("sha256").update(rules).digest("hex"), OLD_RULES_SHA256);
   // Anchors across all four rules, so a reordering is caught too.

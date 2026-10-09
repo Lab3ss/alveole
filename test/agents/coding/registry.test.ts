@@ -56,3 +56,47 @@ test("idleRooms only considers rooms with a live pod", () => {
   saveRoom(r);
   assert.deepEqual(idleRooms(0), []);
 });
+
+test("a registry.db written by the pre-split build loads and keeps working (AC-3)", async () => {
+  const legacyPath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "registry-legacy-")), "registry.db");
+  const legacy = new DatabaseSync(legacyPath);
+  // The exact table shape the old src/registry.ts created, before the git-identity columns.
+  legacy.exec(
+    `CREATE TABLE rooms (
+       room_id TEXT PRIMARY KEY, onboarding TEXT, repo TEXT, token TEXT, model TEXT,
+       pod_name TEXT, session_id TEXT, last_activity INTEGER NOT NULL
+     )`,
+  );
+  legacy
+    .prepare(`INSERT INTO rooms VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run("!old:example.org", "model", "lab3ss/alveole", "ghp_legacytoken1234", "some/model", "room-old", "ses_old", 1_000);
+  legacy.close();
+
+  // Fresh process: the registry opens its DB at import time.
+  const { execFileSync } = await import("node:child_process");
+  const script = `
+    const { getRoom, saveRoom } = await import(${JSON.stringify(path.resolve("src/agents/coding/registry.ts"))});
+    const r = getRoom("!old:example.org");
+    const out = { onboarding: r.onboarding ?? null, repo: r.repo, model: r.model, podName: r.podName, last: r.lastActivity };
+    r.gitAuthorName = "Ada";
+    saveRoom(r);
+    console.log(JSON.stringify(out));
+  `;
+  const out = execFileSync(process.execPath, ["--input-type=module", "-e", script], {
+    env: { ...process.env, REGISTRY_DB_PATH: legacyPath },
+    encoding: "utf8",
+  });
+  assert.deepEqual(JSON.parse(out.trim().split("\n").pop()!), {
+    onboarding: null, // legacy "model" step → treated as fully onboarded
+    repo: "lab3ss/alveole",
+    model: "some/model",
+    podName: "room-old",
+    last: 1000,
+  });
+  const db = new DatabaseSync(legacyPath);
+  const row: any = db.prepare(`SELECT * FROM rooms WHERE room_id = ?`).get("!old:example.org");
+  const cols = (db.prepare(`PRAGMA table_info(rooms)`).all() as any[]).map((c) => c.name);
+  db.close();
+  assert.equal(row.git_author_name, "Ada"); // new column added in place and writable
+  assert.equal(new Set(cols).size, cols.length); // no duplicated columns
+});

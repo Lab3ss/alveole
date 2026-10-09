@@ -2,7 +2,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Effect, Layer, ManagedRuntime } from "effect";
 import { ChatAdapter, type ChatAdapterService, type InboundMessage, type OutboundEvent } from "../../../src/platform/adapter/types.ts";
-import { Orchestrator, OrchestratorLive } from "../../../src/agents/coding/orchestrator.ts";
+import { Agent } from "../../../src/platform/agent.ts";
+import { CodingAgentLive } from "../../../src/agents/coding/index.ts";
+import { codingAgentRules } from "../../../src/agents/coding/rules.ts";
 import { Registry, type RegistryService, type Room } from "../../../src/agents/coding/registry-service.ts";
 import { Workspace, type Failure, type WatchHandlers, type WorkspaceService } from "../../../src/agents/coding/workspace.ts";
 
@@ -28,8 +30,10 @@ const calls = {
 };
 let watchHandlers: WatchHandlers | undefined;
 
+const FAKE_CHANNEL_RULES = { preamble: "FAKE-PREAMBLE\n", sharedRoom: "FAKE-SHARED\n", formatting: "FAKE-FORMAT\n" };
+
 const fakeAdapter: ChatAdapterService = {
-  capabilities: { markdown: false, maxMessageChars: 3000, canRedact: true, selfMention: "@coding-agent", formattingRules: "FAKE-CHANNEL-RULES" },
+  capabilities: { markdown: false, maxMessageChars: 3000, canRedact: true, selfMention: "@coding-agent", channelRules: FAKE_CHANNEL_RULES },
   start: () => Effect.void,
   send: (conversationId, event) =>
     Effect.sync(() => {
@@ -138,7 +142,7 @@ const DEFAULT_MODEL = "deepseek/deepseek-v4.1-flash";
 
 const runtime = ManagedRuntime.make(
   Layer.provide(
-    OrchestratorLive({ idleTeardownMs: 3600_000, sweepIntervalMs: 60_000, turnWatchdogMs: 0, turnMaxMs: 0, sessionCostCapUsd: 0, defaultModel: DEFAULT_MODEL }),
+    CodingAgentLive({ idleTeardownMs: 3600_000, sweepIntervalMs: 60_000, turnWatchdogMs: 0, turnMaxMs: 0, sessionCostCapUsd: 0, defaultModel: DEFAULT_MODEL }),
     layers,
   ),
 );
@@ -151,14 +155,14 @@ const createdRuntimes: Array<ManagedRuntime.ManagedRuntime<any, any>> = [];
 const guardrailOrchestrator = async (cap: Partial<import("../../../src/agents/coding/orchestrator.ts").OrchestratorConfig>) => {
   const rt = ManagedRuntime.make(
     Layer.provide(
-      OrchestratorLive({ idleTeardownMs: 3600_000, sweepIntervalMs: 60_000, turnWatchdogMs: 0, turnMaxMs: 0, sessionCostCapUsd: 0, defaultModel: DEFAULT_MODEL, ...cap }),
+      CodingAgentLive({ idleTeardownMs: 3600_000, sweepIntervalMs: 60_000, turnWatchdogMs: 0, turnMaxMs: 0, sessionCostCapUsd: 0, defaultModel: DEFAULT_MODEL, ...cap }),
       layers,
     ),
   );
   createdRuntimes.push(rt);
   const orch = await rt.runPromise(
     Effect.gen(function* () {
-      return yield* Orchestrator;
+      return yield* Agent;
     }),
   );
   return (msg: TestMsg) => Effect.runPromise(orch.handleInbound({ mentioned: true, ...msg }));
@@ -168,7 +172,7 @@ test.after(() => Promise.all([runtime.dispose(), ...createdRuntimes.map((rt) => 
 
 const orchestrator = await runtime.runPromise(
   Effect.gen(function* () {
-    return yield* Orchestrator;
+    return yield* Agent;
   }),
 );
 
@@ -233,8 +237,8 @@ test("onboarding collects repo → token, then provisions on the default model",
   assert.equal(rooms.get("!t1")?.podName, "room-test-t1");
   assert.equal(rooms.get("!t1")?.sessionId, "ses1");
   assert.equal(calls.provision.length, 1);
-  // The channel's formatting capability profile is injected into the pod.
-  assert.equal(calls.provision[0].rules, "FAKE-CHANNEL-RULES");
+  // The agent composes AGENT_RULES from the channel's fragments and injects it into the pod.
+  assert.equal(calls.provision[0].rules, codingAgentRules(FAKE_CHANNEL_RULES));
   const last = recorded[recorded.length - 1];
   assert.equal(last.event.type, "info");
   assert.ok(last.event.type === "info" && last.event.text.includes("Ready"));

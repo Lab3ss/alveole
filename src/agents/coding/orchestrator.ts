@@ -17,13 +17,14 @@
  * carry a stable reason plus the raw cause's message; the full cause (HTTP
  * status, errno, stack) is logged exactly once, at the seam that produced it.
  */
-import { Context, Effect, Layer } from "effect";
+import { Effect } from "effect";
 import { ChatAdapter, type InboundMessage, type OutboundEvent } from "../../platform/adapter/types.ts";
 import { type AgentError, type AgentService } from "../../platform/agent.ts";
 import { createRoomGate } from "../../platform/room-gate.ts";
 import { describeError } from "../../platform/util.ts";
 import { formatUsage, parseRepo, shellQuote } from "./util.ts";
 import * as present from "./present.ts";
+import { codingAgentRules } from "./rules.ts";
 import { Registry, type Room } from "./registry-service.ts";
 import { Workspace, type Failure } from "./workspace.ts";
 
@@ -62,15 +63,6 @@ export type OrchestratorConfig = {
    * DEFAULT_CODING_AGENT_MODEL. A user can override it per room with /model. */
   readonly defaultModel: string;
 };
-
-/** The coding agent's service — an AgentService (platform/agent.ts) with the
- * inbound handler's error channel kept permissive so the platform boundary can
- * catch anything that escapes. */
-export interface OrchestratorService extends AgentService {
-  readonly handleInbound: (msg: InboundMessage) => Effect.Effect<void, AgentError>;
-}
-
-export class Orchestrator extends Context.Tag("alveole/Orchestrator")<Orchestrator, OrchestratorService>() {}
 
 export const makeCodingAgent = (config: OrchestratorConfig) =>
   Effect.gen(function* () {
@@ -433,7 +425,7 @@ export const makeCodingAgent = (config: OrchestratorConfig) =>
         const password = yield* workspace.provision(
           name,
           { repo: room.repo!, token: room.token!, gitAuthorName: room.gitAuthorName, gitAuthorEmail: room.gitAuthorEmail },
-          adapter.capabilities.formattingRules,
+          adapter.capabilities.channelRules && codingAgentRules(adapter.capabilities.channelRules),
         );
         serverPasswords.set(room.roomId, password);
         // Record podName as soon as the pod exists, not after it's confirmed
@@ -629,7 +621,8 @@ export const makeCodingAgent = (config: OrchestratorConfig) =>
         yield* send(room.roomId, {
           type: "info",
           text:
-            `✅ Ready. I'm using the \`${room.model}\` model by default — change it anytime with ` +
+            "✅ Ready.\n" +
+            `${room.model} is the default model. Change it anytime with ` +
             `\`${adapter.capabilities.selfMention ?? "@coding-agent"} /model <openrouter_model>\`.\n\n` +
             "What would you like me to do?",
         });
@@ -899,7 +892,6 @@ export const makeCodingAgent = (config: OrchestratorConfig) =>
       Effect.andThen(Effect.sleep(config.sweepIntervalMs), sweep),
     );
 
-    return { handleInbound, abandon, greet, start } satisfies OrchestratorService;
+    return { handleInbound, abandon, greet, start } satisfies AgentService;
   });
 
-export const OrchestratorLive = (config: OrchestratorConfig) => Layer.effect(Orchestrator, makeCodingAgent(config));
