@@ -35,6 +35,20 @@ test("stripMention leaves an unmatched message untouched", () => {
   assert.equal(stripMention("@coding-agency hello", TOKENS), "@coding-agency hello");
 });
 
+test("an authoritative mention is stripped even when glued to the payload", () => {
+  // The reported bug: a mention pill butted against the answer, e.g. from a
+  // client that renders the mention without a trailing space. The default
+  // boundary guard refuses to strip it; the authoritative signal recovers it.
+  assert.equal(stripMention("@coding-agentyes", TOKENS, { authoritative: true }), "yes");
+  assert.equal(stripMention("coding-agentyes", TOKENS, { authoritative: true }), "yes");
+  assert.equal(
+    stripMention("@coding-agent:matrix.example.orgyes", TOKENS, { authoritative: true }),
+    "yes",
+  );
+  // Without the authoritative signal the boundary guard still holds.
+  assert.equal(stripMention("@coding-agentyes", TOKENS), "@coding-agentyes");
+});
+
 test("codingAgentRules names the bot's own handle", () => {
   const rules = codingAgentRules(channelRulesFor("@coding-agent"));
   assert.ok(rules.includes("@coding-agent"));
