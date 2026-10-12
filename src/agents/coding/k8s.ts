@@ -249,7 +249,13 @@ export async function waitForRunning(name: string, timeoutMs = 120_000): Promise
     const pod = await coreApi().readNamespacedPod({ name, namespace: ROOMS_NS });
     const running = pod.status?.containerStatuses?.some((c) => c.state?.running);
     if (running) return;
-    if (pod.status?.phase === "Failed") throw new Error(`room pod ${name} failed to start`);
+    if (pod.status?.phase === "Failed") {
+      const t = pod.status.containerStatuses?.find((c) => c.state?.terminated)?.state?.terminated;
+      const why = [pod.status.reason, t && `exit ${t.exitCode}`, t?.reason, t?.message ?? pod.status.message]
+        .filter(Boolean)
+        .join(" ");
+      throw new Error(`room pod ${name} failed to start${why ? `: ${why}` : ""}`);
+    }
     const waiting = pod.status?.containerStatuses?.find((c) => c.state?.waiting)?.state?.waiting;
     if (waiting && FATAL_WAIT_REASONS.has(waiting.reason ?? "")) {
       throw new Error(`room pod ${name} cannot start: ${waiting.reason} ${waiting.message ?? ""}`.trim());
