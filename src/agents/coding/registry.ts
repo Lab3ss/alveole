@@ -4,11 +4,11 @@
  * across restarts so a room re-provisions without re-asking onboarding
  * questions, even after its pod is torn down.
  */
-import { createBaseRegistry, openRegistryDb, type BaseRoom, type RoomColumn } from "../../platform/registry.ts";
+import { createBaseRegistry, openRegistryDb, type RoomColumn } from "../../platform/registry.ts";
+import { harnessColumns, type HarnessRoom } from "../../harness/opencode/registry.ts";
 
 export type OnboardingStep = "repo" | "token";
-export type Room = BaseRoom & {
-  roomId: string;
+export type Room = HarnessRoom & {
   onboarding?: OnboardingStep; // unset once the repo+token are in (model has a default)
   repo?: string;
   token?: string;
@@ -16,19 +16,15 @@ export type Room = BaseRoom & {
    * unset, the runner derives it from the room's GitHub token at boot. */
   gitAuthorName?: string;
   gitAuthorEmail?: string;
-  podName?: string; // set only while a pod is live
-  sessionId?: string; // opencode session id; cleared when the pod is torn down
-  lastActivity: number; // epoch ms
 };
 
 const columns: readonly RoomColumn<Room>[] = [
+  ...harnessColumns,
   { column: "onboarding", type: "TEXT", write: (r) => r.onboarding },
   { column: "repo", type: "TEXT", write: (r) => r.repo },
   { column: "token", type: "TEXT", write: (r) => r.token },
   { column: "git_author_name", type: "TEXT", write: (r) => r.gitAuthorName },
   { column: "git_author_email", type: "TEXT", write: (r) => r.gitAuthorEmail },
-  { column: "pod_name", type: "TEXT", write: (r) => r.podName },
-  { column: "session_id", type: "TEXT", write: (r) => r.sessionId },
 ];
 
 const str = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);

@@ -48,7 +48,7 @@ export const OPENCODE_PORT = k8s.OPENCODE_PORT;
 // re-provision-after-idle flows — behaves identically across drivers.
 export const roomResourceName = k8s.roomResourceName;
 export type RoomPodState = k8s.RoomPodState;
-export type RoomEnv = k8s.RoomEnv;
+export type RunnerEnv = k8s.RunnerEnv;
 
 const RUNNER_IMAGE = process.env.RUNNER_IMAGE ?? "alveole-runner:local";
 /** Broker's own container name, needed to join per-room networks. */
@@ -87,17 +87,13 @@ export function parseEnvFile(content: string): Record<string, string> {
 }
 
 /** The exact inverse of parseEnvFile for the room's env file. Pure — unit-tested. */
-export function envFileContent(env: {
-  REPO: string;
-  GH_TOKEN: string;
-  OPENCODE_SERVER_PASSWORD: string;
-  OPENROUTER_API_KEY: string;
-  GIT_USER_NAME?: string;
-  GIT_USER_EMAIL?: string;
-}): string {
-  let out = `REPO=${env.REPO}\nGH_TOKEN=${env.GH_TOKEN}\nOPENCODE_SERVER_PASSWORD=${env.OPENCODE_SERVER_PASSWORD}\nOPENROUTER_API_KEY=${env.OPENROUTER_API_KEY}\n`;
-  if (env.GIT_USER_NAME) out += `GIT_USER_NAME=${env.GIT_USER_NAME}\n`;
-  if (env.GIT_USER_EMAIL) out += `GIT_USER_EMAIL=${env.GIT_USER_EMAIL}\n`;
+export function envFileContent(env: RunnerEnv): string {
+  let out = "";
+  for (const [key, value] of Object.entries(k8s.definedEntries(env))) {
+    // One KEY=VALUE per line: a newline would silently split into a bogus entry.
+    if (/[\r\n]/.test(value)) throw new Error(`env value for ${key} contains a newline — can't ride an env file`);
+    out += `${key}=${value}\n`;
+  }
   return out;
 }
 
@@ -245,21 +241,14 @@ async function inspectContainerState(name: string): Promise<DockerContainerState
  *     dead runner stays dead, same as restartPolicy: Never);
  * resolving to the room's (pre-existing or fresh) opencode server password.
  */
-export async function provisionRoom(name: string, env: RoomEnv, agentRules?: string): Promise<string> {
+export async function provisionRoom(name: string, env: RunnerEnv, agentRules?: string, image = RUNNER_IMAGE): Promise<string> {
   const existing = await readRoomEnv(name);
   const serverPassword = existing?.OPENCODE_SERVER_PASSWORD ?? randomBytes(16).toString("hex");
   if (!existing) {
     await mkdir(path.dirname(roomEnvFilePath(name)), { recursive: true });
     await writeFile(
       roomEnvFilePath(name),
-      envFileContent({
-        REPO: env.repo,
-        GH_TOKEN: env.token,
-        OPENCODE_SERVER_PASSWORD: serverPassword,
-        OPENROUTER_API_KEY: env.openrouterKey,
-        GIT_USER_NAME: env.gitAuthorName,
-        GIT_USER_EMAIL: env.gitAuthorEmail,
-      }),
+      envFileContent({ ...env, OPENCODE_SERVER_PASSWORD: serverPassword }),
       { mode: 0o600 },
     );
   }
@@ -294,7 +283,7 @@ export async function provisionRoom(name: string, env: RoomEnv, agentRules?: str
   ];
   // Multi-line value — rides via -e (see module header), never --env-file.
   if (agentRules) args.push("-e", `AGENT_RULES=${agentRules}`);
-  args.push(RUNNER_IMAGE);
+  args.push(image);
   await exec("docker", args);
 
   return serverPassword;

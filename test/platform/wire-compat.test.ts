@@ -9,7 +9,8 @@ import { createHash } from "node:crypto";
 import { renderOutbound } from "../../src/platform/adapter/matrix.ts";
 import { codingAgentRules } from "../../src/agents/coding/rules.ts";
 import { channelRulesFor } from "../../src/platform/channel-rules.ts";
-import * as present from "../../src/agents/coding/present.ts";
+import * as present from "../../src/harness/opencode/present.ts";
+import * as codingPresent from "../../src/agents/coding/present.ts";
 
 const MENTION = "@coding-agent";
 
@@ -38,9 +39,9 @@ test("rebound coding events render to the pre-split Matrix text", () => {
     ["question (multi)", present.question("1. Which env?\n2. Which branch?", MENTION)],
     ["cost-alert", present.costAlert(5)],
     ["compacted", present.compacted()],
-    ["token-received (redacted)", present.tokenReceived(true)],
-    ["token-received (not redacted)", present.tokenReceived(false)],
-    ["teardown", present.teardown("requested", "owner/name")],
+    ["token-received (redacted)", codingPresent.tokenReceived(true)],
+    ["token-received (not redacted)", codingPresent.tokenReceived(false)],
+    ["teardown", codingPresent.teardown("requested", "owner/name")],
   ];
   assert.deepEqual(cases.map(([, e]) => e.type), [
     "info", "info", "info", "info", "info", "info", "info", "info", "info", "info",
@@ -71,13 +72,13 @@ test("rebound coding events render to the pre-split Matrix text", () => {
     renderOutbound(present.compacted()),
     "🗜️ Context got compacted (older history was trimmed to make room).",
   );
-  assert.equal(renderOutbound(present.tokenReceived(true)), "Got it (and removed from history).");
+  assert.equal(renderOutbound(codingPresent.tokenReceived(true)), "Got it (and removed from history).");
   assert.equal(
-    renderOutbound(present.tokenReceived(false)),
+    renderOutbound(codingPresent.tokenReceived(false)),
     "Got it. ⚠️ I couldn't remove that message from history (I need moderator power level in this room to redact it) — make me a moderator if you want that.",
   );
   assert.equal(
-    renderOutbound(present.teardown("requested", "owner/name")),
+    renderOutbound(codingPresent.teardown("requested", "owner/name")),
     "🛑 Stopped (requested). owner/name is still remembered — send a message to resume.",
   );
 });

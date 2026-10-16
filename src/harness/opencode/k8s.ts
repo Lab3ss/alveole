@@ -38,26 +38,31 @@ function coreApi(): k8s.CoreV1Api {
  * `kubectl logs`/`get pod` by eye — so it's computed once at provision time
  * and stored on the Room; a later room rename doesn't change it.
  */
-export function roomResourceName(roomId: string, roomName?: string): string {
+export function roomResourceName(roomId: string, roomName?: string, agentName?: string): string {
   const hash = crypto.createHash("sha1").update(roomId).digest("hex").slice(0, 16);
+  // Two bots can share a room: each bot's resources carry its identity so they
+  // never collide. Unset (the original coding agent) keeps the historical names,
+  // so rooms already live under them aren't orphaned.
+  const agent = (agentName ?? "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 20).replace(/-+$/g, "");
+  const head = agent ? `room-${agent}` : "room";
   const slug = (roomName ?? "")
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
-    .slice(0, 63 - "room-".length - 1 - hash.length)
+    .slice(0, 63 - head.length - 1 - 1 - hash.length)
     .replace(/-+$/g, "");
-  return slug ? `room-${slug}-${hash}` : `room-${hash}`;
+  return slug ? `${head}-${slug}-${hash}` : `${head}-${hash}`;
 }
 
-export type RoomEnv = {
-  repo: string;
-  token: string;
-  openrouterKey: string;
-  /** Optional git commit identity override (`/git-name`, `/git-email`); when
-   * absent the runner derives it from the GitHub token at boot. */
-  gitAuthorName?: string;
-  gitAuthorEmail?: string;
-};
+/** The env a room's pod is started with (minus the opencode server password,
+ * which the driver generates). Supplied by the agent's profile; undefined
+ * values are omitted. */
+export type RunnerEnv = Record<string, string | undefined>;
+
+/** The env minus undefined values, as a plain string map. */
+export function definedEntries(env: RunnerEnv): Record<string, string> {
+  return Object.fromEntries(Object.entries(env).filter((e): e is [string, string] => e[1] !== undefined));
+}
 
 async function ignoringConflict(fn: () => Promise<unknown>): Promise<void> {
   try {
@@ -88,19 +93,15 @@ export async function getRoomServerPassword(name: string): Promise<string> {
  * whatever password was baked in on its FIRST creation, so generating a new
  * one here and using that for auth would silently mismatch (401).
  */
-export async function provisionRoom(name: string, env: RoomEnv, agentRules?: string): Promise<string> {
+export async function provisionRoom(name: string, env: RunnerEnv, agentRules?: string, image = RUNNER_IMAGE): Promise<string> {
   await ignoringConflict(() =>
     coreApi().createNamespacedSecret({
       namespace: ROOMS_NS,
       body: {
         metadata: { name },
         stringData: {
-          REPO: env.repo,
-          GH_TOKEN: env.token,
+          ...definedEntries(env),
           OPENCODE_SERVER_PASSWORD: crypto.randomBytes(16).toString("hex"),
-          OPENROUTER_API_KEY: env.openrouterKey,
-          ...(env.gitAuthorName ? { GIT_USER_NAME: env.gitAuthorName } : {}),
-          ...(env.gitAuthorEmail ? { GIT_USER_EMAIL: env.gitAuthorEmail } : {}),
           ...(agentRules ? { AGENT_RULES: agentRules } : {}),
         },
       },
@@ -120,7 +121,7 @@ export async function provisionRoom(name: string, env: RoomEnv, agentRules?: str
           containers: [
             {
               name: "runner",
-              image: RUNNER_IMAGE,
+              image,
               envFrom: [{ secretRef: { name } }],
               ports: [{ name: "http", containerPort: OPENCODE_PORT }],
               resources: {

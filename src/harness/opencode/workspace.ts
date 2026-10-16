@@ -21,7 +21,7 @@ import * as k8s from "./k8s.ts";
 import * as opencode from "./opencode.ts";
 import { describeError } from "../../platform/util.ts";
 
-export type { RoomPodState, RoomEnv } from "./k8s.ts";
+export type { RoomPodState, RunnerEnv } from "./k8s.ts";
 export type { SessionUsage, PermissionRequest, ToolProgress, SessionError, SessionCostUpdate, QuestionAsk } from "./opencode.ts";
 
 /** Stable failure codes for the workspace seam. Raw causes are logged where
@@ -68,8 +68,9 @@ export interface WorkspaceService {
   /** Idempotent provision (Secret+Pod+Service); resolves to the server password. */
   readonly provision: (
     resourceName: string,
-    project: { repo: string; token: string; gitAuthorName?: string; gitAuthorEmail?: string },
+    runnerEnv: k8s.RunnerEnv,
     agentRules?: string,
+    image?: string,
   ) => Effect.Effect<string, Failure<"provision-failed" | "secret-read-failed">>;
   readonly waitForRunning: (resourceName: string) => Effect.Effect<void, Failure<"pod-wait-failed">>;
   readonly readPodState: (resourceName: string) => Effect.Effect<k8s.RoomPodState, Failure<"pod-read-failed">>;
@@ -136,6 +137,10 @@ export interface WorkspaceService {
     handlers: WatchHandlers,
   ) => Effect.Effect<() => void, Failure<"watch-failed">>;
 }
+
+/** `agentName` prefixes this bot's pod/network/env-file names so several bots can
+ * share a room; unset keeps the historical names (see k8s.roomResourceName). */
+export type WorkspaceConfig = { openrouterKey: string; agentName?: string };
 
 export class Workspace extends Context.Tag("alveole/Workspace")<Workspace, WorkspaceService>() {}
 
@@ -250,18 +255,14 @@ const httpMethods = () => ({
     ),
 });
 
-const makeK8sWorkspace = (config: { openrouterKey: string }): WorkspaceService => ({
+const makeK8sWorkspace = (config: WorkspaceConfig): WorkspaceService => ({
   ...httpMethods(),
-  resourceName: k8s.roomResourceName,
+  resourceName: (conversationId, label) => k8s.roomResourceName(conversationId, label, config.agentName),
   serverUrl: k8s.roomServerUrl,
 
-  provision: (name, project, agentRules) =>
+  provision: (name, runnerEnv, agentRules, image) =>
     failing("provision-failed", () =>
-      k8s.provisionRoom(
-        name,
-        { repo: project.repo, token: project.token, openrouterKey: config.openrouterKey, gitAuthorName: project.gitAuthorName, gitAuthorEmail: project.gitAuthorEmail },
-        agentRules,
-      ),
+      k8s.provisionRoom(name, { ...runnerEnv, OPENROUTER_API_KEY: config.openrouterKey }, agentRules, image),
     ),
   waitForRunning: (name) => failing("pod-wait-failed", () => k8s.waitForRunning(name)),
   readPodState: (name) => failing("pod-read-failed", () => k8s.readRoomPodState(name)),
@@ -288,7 +289,7 @@ const makeK8sWorkspace = (config: { openrouterKey: string }): WorkspaceService =
  *  - createSession additionally re-attaches once on a connection-refused-type
  *    failure as belt-and-suspenders for anything the first two missed.
  */
-const makeComposeWorkspace = (config: { openrouterKey: string }): WorkspaceService => {
+const makeComposeWorkspace = (config: WorkspaceConfig): WorkspaceService => {
   /** Room resource name a room's baseUrl points at (docker DNS name = container name). */
   const roomNameFromUrl = (baseUrl: string): string => new URL(baseUrl).hostname;
   /** Connection-establishment failures — the room container may be perfectly
@@ -298,16 +299,12 @@ const makeComposeWorkspace = (config: { openrouterKey: string }): WorkspaceServi
 
   return {
     ...httpMethods(),
-    resourceName: docker.roomResourceName,
+    resourceName: (conversationId, label) => docker.roomResourceName(conversationId, label, config.agentName),
     serverUrl: docker.roomServerUrl,
 
-    provision: (name, project, agentRules) =>
+    provision: (name, runnerEnv, agentRules, image) =>
       failing("provision-failed", () =>
-        docker.provisionRoom(
-          name,
-          { repo: project.repo, token: project.token, openrouterKey: config.openrouterKey, gitAuthorName: project.gitAuthorName, gitAuthorEmail: project.gitAuthorEmail },
-          agentRules,
-        ),
+        docker.provisionRoom(name, { ...runnerEnv, OPENROUTER_API_KEY: config.openrouterKey }, agentRules, image),
       ),
     waitForRunning: (name) => failing("pod-wait-failed", () => docker.waitForRunning(name)),
     readPodState: (name) => failing("pod-read-failed", () => docker.readRoomPodState(name)),
@@ -336,7 +333,7 @@ const makeComposeWorkspace = (config: { openrouterKey: string }): WorkspaceServi
   };
 };
 
-export const WorkspaceLive = (config: { openrouterKey: string }) => {
+export const WorkspaceLive = (config: WorkspaceConfig) => {
   const backend = process.env.WORKSPACE_BACKEND ?? "k8s";
   const make = backend === "compose" ? makeComposeWorkspace : makeK8sWorkspace;
   return Layer.effect(Workspace, Effect.sync(() => make(config)));

@@ -1,7 +1,7 @@
 # Room runner — one ephemeral pod per Matrix room, no persistent storage.
 # Clones the room's repo (GH_TOKEN from env, supplied at onboarding, never
 # baked into the image) and runs a headless opencode server on the room's
-# chosen model/provider; the broker drives it over HTTP (see src/agents/coding/opencode.ts).
+# chosen model/provider; the broker drives it over HTTP (see src/harness/opencode/opencode.ts).
 FROM node:22-bookworm-slim
 
 # Pin the opencode version: an unpinned `npm install -g opencode-ai` makes

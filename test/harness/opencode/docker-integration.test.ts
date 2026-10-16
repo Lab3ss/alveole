@@ -27,7 +27,7 @@ test(
     // warn-and-continue (production compose always has the broker container).
     process.env.BROKER_CONTAINER_NAME = "alveole-broker-does-not-exist-in-this-test";
 
-    const docker = await import("../../../src/agents/coding/docker.ts");
+    const docker = await import("../../../src/harness/opencode/docker.ts");
 
     // Tiny stand-in runner whose entrypoint just sleeps: no GH_TOKEN needed.
     const buildDir = await mkdtemp(path.join(tmpdir(), "alveole-docker-it-img-"));
@@ -41,7 +41,7 @@ test(
 
     const name = docker.roomResourceName("integration-test-room-" + Date.now(), "docker it");
     try {
-      const password = await docker.provisionRoom(name, { repo: "owner/name", token: "unused-by-test-image", openrouterKey: "unused" });
+      const password = await docker.provisionRoom(name, { REPO: "owner/name", GH_TOKEN: "unused-by-test-image", OPENROUTER_API_KEY: "unused" });
       assert.match(password, /^[0-9a-f]{32}$/);
 
       await docker.waitForRunning(name);

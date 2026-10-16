@@ -1,14 +1,17 @@
 /**
- * Coding orchestrator — the transport-neutral core of the coding agent.
+ * The opencode engine — the transport-neutral core of every pod-backed agent.
  *
- * Owns everything chat-shaped-but-platform-agnostic: the onboarding state
- * machine, command routing, the busy-lock, the approval wait/resolve cycle,
- * cost alerting, idle teardown, and the provisioning/self-healing flow for a
- * conversation's workspace. Speaks only to three Effect services:
+ * Owns everything a pod-backed agent does regardless of its job: command
+ * routing, the busy-lock, the approval wait/resolve cycle, cost alerting, idle
+ * teardown, and the provisioning/self-healing flow for a conversation's
+ * workspace. What differs per agent (onboarding, extra commands, the runner's
+ * env and image, persona and workspace texts) comes from a Profile. Speaks only
+ * to three Effect services:
  *
  *   ChatAdapter  — outbound base events + inbound message parsing (this file
  *                  never mentions Matrix)
- *   Registry     — persisted per-conversation state (repo/token/model/pod)
+ *   Registry     — persisted per-conversation state (model/pod/session + the
+ *                  profile's own columns, which it alone reads)
  *   Workspace    — k8s/docker provisioning + the room's opencode server
  *
  * It returns an Agent-compatible service (see platform/agent.ts): the platform
@@ -22,29 +25,20 @@ import { ChatAdapter, type InboundMessage, type OutboundEvent } from "../../plat
 import { type AgentError, type AgentService } from "../../platform/agent.ts";
 import { createRoomGate } from "../../platform/room-gate.ts";
 import { describeError } from "../../platform/util.ts";
-import { formatUsage, parseRepo, shellQuote } from "./util.ts";
+import { formatUsage } from "./util.ts";
 import * as present from "./present.ts";
-import { codingAgentRules } from "./rules.ts";
-import { Registry, type Room } from "./registry-service.ts";
+import { Registry, type HarnessRoom, type RegistryService } from "./registry.ts";
+import type { Profile, ProfileContext } from "./profile.ts";
 import { Workspace, type Failure } from "./workspace.ts";
 
 const COST_ALERT_STEP_USD = 5;
 
 /** Namespace shown in the /connect hint's kubectl command. Mirrors the k8s
- * driver's ROOMS_NAMESPACE default (agents/coding/k8s.ts); the core must not
- * import that driver, so the env is read directly here. */
+ * driver's ROOMS_NAMESPACE default (harness/opencode/k8s.ts); the engine must
+ * not import that driver, so the env is read directly here. */
 const ROOMS_NAMESPACE = process.env.ROOMS_NAMESPACE ?? "alveole-rooms";
 
-/** The onboarding opener — sent proactively on join (see greet) and re-sent
- * when a room still at the repo step sends something that isn't a repo. */
-const REPO_PROMPT =
-  "Let's get this workspace set up in two quick steps:\n\n" +
-  "1. Send the repo I should work on — `owner/name` or a GitHub URL.\n" +
-  "2. Send a GitHub PAT scoped to that repo — it stays only inside this room's isolated workspace.\n\n" +
-  "Let's start with step 1: what repo should I work on?\n\n" +
-  "(I only act when you @-mention me — include that in every message you send me.)";
-
-export type OrchestratorConfig = {
+export type EngineConfig = {
   /** Idle threshold before a live pod is torn down automatically. */
   readonly idleTeardownMs: number;
   /** How often the idle sweep runs. */
@@ -60,14 +54,17 @@ export type OrchestratorConfig = {
    * circuit-breaker against an agent looping and burning tokens. 0 disables. */
   readonly sessionCostCapUsd: number;
   /** OpenRouter model every newly onboarded room uses by default — from
-   * DEFAULT_CODING_AGENT_MODEL. A user can override it per room with /model. */
+   * the profile's env (e.g. DEFAULT_CODING_AGENT_MODEL). A user can override it per room with /model. */
   readonly defaultModel: string;
 };
 
-export const makeCodingAgent = (config: OrchestratorConfig) =>
+export const makeOpencodeAgent = <R extends HarnessRoom>(profile: Profile<R>, config: EngineConfig) =>
   Effect.gen(function* () {
+    type Room = R;
     const adapter = yield* ChatAdapter;
-    const registry = yield* Registry;
+    // The Registry tag is typed over the harness base; this agent's registry
+    // returns its own R (an extension of it), so narrow once, here.
+    const registry = (yield* Registry) as unknown as RegistryService<R>;
     const workspace = yield* Workspace;
 
     // Live-pod-only per-conversation state, never persisted: the opencode
@@ -103,7 +100,7 @@ export const makeCodingAgent = (config: OrchestratorConfig) =>
     const send = (conversationId: string, event: OutboundEvent): Effect.Effect<void> => adapter.send(conversationId, event);
 
     /** The bot's handle, named in approval/question prompts. */
-    const mention = adapter.capabilities.selfMention ?? "@coding-agent";
+    const mention = adapter.capabilities.selfMention ?? profile.defaultMention;
 
     const announce = (room: Room, text: string): Effect.Effect<void> => send(room.roomId, { type: "status", text });
 
@@ -424,8 +421,9 @@ export const makeCodingAgent = (config: OrchestratorConfig) =>
         yield* announce(room, "📦 creating pod…");
         const password = yield* workspace.provision(
           name,
-          { repo: room.repo!, token: room.token!, gitAuthorName: room.gitAuthorName, gitAuthorEmail: room.gitAuthorEmail },
-          adapter.capabilities.channelRules && codingAgentRules(adapter.capabilities.channelRules),
+          profile.runnerEnv(room),
+          adapter.capabilities.channelRules && profile.rules(adapter.capabilities.channelRules),
+          profile.runnerImage,
         );
         serverPasswords.set(room.roomId, password);
         // Record podName as soon as the pod exists, not after it's confirmed
@@ -434,7 +432,7 @@ export const makeCodingAgent = (config: OrchestratorConfig) =>
         // never find and clean it up on the next attempt.
         room.podName = name;
         registry.save(room);
-        yield* announce(room, "⏳ waiting for pod to start (cloning repo)…");
+        yield* announce(room, profile.podWaitText);
         yield* workspace.waitForRunning(name);
         yield* announce(room, "🔌 pod running, connecting to opencode server…");
         const sessionId = yield* workspace.createSession(workspace.serverUrl(name), password);
@@ -458,7 +456,7 @@ export const makeCodingAgent = (config: OrchestratorConfig) =>
           yield* workspace.teardown(room.podName).pipe(Effect.catchAll(() => Effect.void));
         }
         teardownFields(room);
-        yield* send(room.roomId, present.teardown(reason, room.repo ?? ""));
+        yield* send(room.roomId, profile.teardownEvent(reason, room));
       });
 
     /** Nobody but the bot is left in the conversation — unlike `teardown`, purges the registry
@@ -478,16 +476,10 @@ export const makeCodingAgent = (config: OrchestratorConfig) =>
         registry.delete(conversationId);
       });
 
-    /** Bot just joined a conversation: start onboarding immediately instead of
-     * waiting for the user to speak first. No-op if the conversation is already
-     * known — an onboarded room, one mid-onboarding, or a repeat join signal
-     * (the adapter can fire this both on a fresh join and at startup). */
-    const greet = (conversationId: string): Effect.Effect<void> =>
-      Effect.gen(function* () {
-        if (registry.get(conversationId)) return;
-        registry.create(conversationId);
-        yield* send(conversationId, { type: "info", text: REPO_PROMPT });
-      });
+    /** Bot just joined a conversation — the profile decides what a greeting is
+     * (coding opens onboarding). The adapter can fire this both on a fresh join
+     * and at startup, so profiles must be no-ops for a known conversation. */
+    const greet = (conversationId: string): Effect.Effect<void> => profile.greet(conversationId, ctx);
 
     /** Live usage pull, not the cached SSE state — always accurate, and works even
      * before any session.updated event has arrived. */
@@ -498,31 +490,23 @@ export const makeCodingAgent = (config: OrchestratorConfig) =>
         yield* send(room.roomId, { type: "usage", text: formatUsage(usage) });
       });
 
-    /** Pushes the room's git identity overrides into a LIVE runner by rewriting
-     * its global git config through opencode's shell endpoint — so `/git-name`
-     * and `/git-email` take effect without a re-provision (which would drop the
-     * session). Returns false when there's no live runner (or a turn is running)
-     * and the change will instead be seeded on the next provision. Total: a
-     * failure to reach the runner degrades to "apply later", never fails the
-     * command. */
-    const applyGitIdentity = (room: Room): Effect.Effect<boolean> =>
+    /** Runs a shell command in the room's LIVE runner through opencode's shell
+     * endpoint, so a profile can adjust a running workspace without a
+     * re-provision (which would drop the session). Returns false when there's
+     * no live runner (or a turn is running) and the change must instead be
+     * seeded on the next provision. Total: a failure to reach the runner
+     * degrades to "apply later", never fails the caller. */
+    const runInRunner = (room: Room, command: string): Effect.Effect<boolean> =>
       Effect.gen(function* () {
         if (!room.podName || !room.sessionId || busyRooms.has(room.roomId)) return false;
-        // Only override what's set; the other field keeps its boot value (from
-        // the GitHub token) when the runner comes back. Skip the shell entirely
-        // when neither is set (a fresh room that was never overridden).
-        const sets: string[] = [];
-        if (room.gitAuthorName) sets.push(`git config --global user.name ${shellQuote(room.gitAuthorName)}`);
-        if (room.gitAuthorEmail) sets.push(`git config --global user.email ${shellQuote(room.gitAuthorEmail)}`);
-        if (!sets.length) return false;
         const password = serverPasswords.get(room.roomId) ?? (yield* workspace.serverPassword(room.podName));
         serverPasswords.set(room.roomId, password);
-        yield* workspace.runShell(workspace.serverUrl(room.podName), password, room.sessionId, sets.join(" && "));
+        yield* workspace.runShell(workspace.serverUrl(room.podName), password, room.sessionId, command);
         return true;
       }).pipe(
         Effect.catchAll((failure) =>
           Effect.sync(() => {
-            console.warn(`[${room.roomId}] git-identity live apply failed (${failure.code}) — will apply on next provision`);
+            console.warn(`[${room.roomId}] live runner command failed (${failure.code}) — will apply on next provision`);
             return false;
           }),
         ),
@@ -613,23 +597,33 @@ export const makeCodingAgent = (config: OrchestratorConfig) =>
       );
     };
 
-    const handleOnboardingComplete = (room: Room): Effect.Effect<void> =>
+    const completeOnboarding = (room: Room): Effect.Effect<void> =>
       Effect.gen(function* () {
         busyRooms.add(room.roomId);
-        yield* announce(room, `Setting up ${room.repo}…`);
+        yield* announce(room, profile.setupText(room));
         yield* ensureProvisioned(room);
         yield* send(room.roomId, {
           type: "info",
           text:
             "✅ Ready.\n" +
             `${room.model} is the default model. Change it anytime with ` +
-            `\`${adapter.capabilities.selfMention ?? "@coding-agent"} /model <openrouter_model>\`.\n\n` +
+            `\`${mention} /model <openrouter_model>\`.\n\n` +
             "What would you like me to do?",
         });
       }).pipe(
         Effect.catchAll((failure) => send(room.roomId, errorEvent(failure, "setup failed"))),
         Effect.ensuring(Effect.sync(() => busyRooms.delete(room.roomId))),
       );
+
+    const ctx: ProfileContext<R> = {
+      adapter,
+      registry,
+      send,
+      mention,
+      defaultModel: config.defaultModel,
+      runInRunner,
+      completeOnboarding,
+    };
 
     const handleInbound = (msg: InboundMessage): Effect.Effect<void, AgentError> =>
       Effect.gen(function* () {
@@ -716,7 +710,7 @@ export const makeCodingAgent = (config: OrchestratorConfig) =>
         }
 
         if (/^\/model\b/i.test(body)) {
-          const room = registry.get(roomId);
+          let room = registry.get(roomId);
           const arg = body.replace(/^\/model\s*/i, "").trim();
           if (!arg) {
             yield* send(roomId, {
@@ -726,8 +720,13 @@ export const makeCodingAgent = (config: OrchestratorConfig) =>
             return;
           }
           if (!room) {
-            yield* send(roomId, { type: "info", text: "No project set up in this room yet — send a repo first." });
-            return;
+            // Profiles with an onboarding gate refuse until the room is set up;
+            // the others just create the room on demand.
+            if (profile.noRoomText) {
+              yield* send(roomId, { type: "info", text: profile.noRoomText });
+              return;
+            }
+            room = registry.create(roomId);
           }
           room.model = arg;
           registry.save(room);
@@ -737,41 +736,8 @@ export const makeCodingAgent = (config: OrchestratorConfig) =>
           return;
         }
 
-        if (/^\/git-(name|email)\b/i.test(body)) {
-          const isEmail = /^\/git-email\b/i.test(body);
-          const label = isEmail ? "email" : "name";
-          const field = isEmail ? ("gitAuthorEmail" as const) : ("gitAuthorName" as const);
-          const room = registry.get(roomId);
-          const arg = body.replace(/^\/git-(?:name|email)\s*/i, "").trim();
-          if (!arg) {
-            const current = room?.[field];
-            yield* send(roomId, {
-              type: "info",
-              text: current
-                ? `Git author ${label}: ${current}`
-                : `No git author ${label} override set — the workspace derives it from the room's GitHub token.`,
-            });
-            return;
-          }
-          if (!room) {
-            yield* send(roomId, { type: "info", text: "No project set up in this room yet — send a repo first." });
-            return;
-          }
-          if (isEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(arg)) {
-            yield* send(roomId, { type: "info", text: "That doesn't look like an email address." });
-            return;
-          }
-          room[field] = arg;
-          registry.save(room);
-          const applied = yield* applyGitIdentity(room);
-          yield* send(roomId, {
-            type: "info",
-            text:
-              `Git author ${label} set to ${arg}. ` +
-              (applied ? "Takes effect now." : "Takes effect when the workspace next provisions."),
-          });
-          return;
-        }
+        // Profile-specific slash-commands (e.g. coding's /git-name, /git-email).
+        if (profile.command && (yield* profile.command({ roomId, body }, ctx))) return;
 
         // If this room is waiting on a question, this message IS the answer(s) —
         // one line per question when there's more than one, otherwise the whole
@@ -814,46 +780,9 @@ export const makeCodingAgent = (config: OrchestratorConfig) =>
 
         const room = registry.get(roomId) ?? registry.create(roomId);
 
-        if (room.onboarding === "repo") {
-          const repo = parseRepo(body);
-          if (!repo) {
-            yield* send(roomId, { type: "info", text: REPO_PROMPT });
-            return;
-          }
-          room.repo = repo;
-          room.onboarding = "token";
-          registry.save(room);
-          yield* send(roomId, {
-            type: "info",
-            text: `Got it: ${repo}. Now send a GitHub PAT scoped to that repo — it's used only inside this conversation's isolated workspace.`,
-          });
-          return;
-        }
+        if (profile.onboard && (yield* profile.onboard({ room, body, msg }, ctx))) return;
 
-        if (room.onboarding === "token") {
-          if (body.length < 10) {
-            yield* send(roomId, { type: "info", text: "That doesn't look like a token — send the GitHub PAT for this room." });
-            return;
-          }
-          room.token = body;
-          // No model question: every room starts on the default injected via
-          // DEFAULT_CODING_AGENT_MODEL and can override per room with /model.
-          room.model = config.defaultModel;
-          room.onboarding = undefined;
-          registry.save(room);
-          // Best-effort: strip the PAT out of chat history right after reading it.
-          // Not a security boundary (the platform may retain it briefly, and
-          // deletion can't reach anywhere the message already federated), just
-          // closes the main practical exposure — nobody scrolling back sees it.
-          // The adapter reports honestly whether it managed (e.g. Matrix
-          // redaction needs moderator power level).
-          const redacted = msg.messageId && adapter.capabilities.canRedact ? yield* adapter.redact(roomId, msg.messageId) : false;
-          yield* send(roomId, present.tokenReceived(redacted));
-          yield* handleOnboardingComplete(room);
-          return;
-        }
-
-        // Steady state: repo/token/model all known. Drain the ambient buffer
+        // Steady state: the room is set up. Drain the ambient buffer
         // and, if there is anything, hand it to the agent as background ahead
         // of the addressed request. Only a task turn drains it — commands,
         // gate answers and onboarding leave the buffer for the next task.

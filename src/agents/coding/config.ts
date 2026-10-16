@@ -1,13 +1,13 @@
 /**
- * Coding-agent configuration — environment → OrchestratorConfig. The
+ * Coding-agent configuration — environment → EngineConfig. The
  * composition root (broker.ts) calls this; no platform code reads these env
  * vars.
  */
-import type { OrchestratorConfig } from "./orchestrator.ts";
+import type { EngineConfig } from "../../harness/opencode/engine.ts";
 
-export type CodingConfig = OrchestratorConfig;
+export type CodingConfig = EngineConfig;
 
-export function codingConfigFromEnv(env: NodeJS.ProcessEnv = process.env): OrchestratorConfig {
+export function codingConfigFromEnv(env: NodeJS.ProcessEnv = process.env): EngineConfig {
   return {
     idleTeardownMs: parseFloat(env.IDLE_TEARDOWN_HOURS ?? "24") * 3600_000,
     sweepIntervalMs: 15 * 60_000,

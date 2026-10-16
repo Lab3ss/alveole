@@ -1,9 +1,12 @@
 /**
  * Broker entry point — composition root only.
  *
- * Everything the broker does now lives in two places:
+ * Everything the broker does lives in three places:
  *   - src/platform/ — the shared layer: Matrix transport, room gating, boot,
  *     the registry primitives, the Agent interface and start wiring
+ *   - src/harness/opencode/ — the pod engine shared by pod-backed agents:
+ *     workspace drivers, the opencode client, and the turn lifecycle, driven
+ *     by an agent's Profile
  *   - src/agents/   — self-contained agents; today only the coding agent
  *
  * This file resolves boot credentials, picks an agent, builds the layers,
@@ -46,7 +49,7 @@ const AdapterLive = MatrixAdapterLive({
 // agent, so startAgent (which reads ChatAdapter from context) shares it.
 const AgentLayer = CodingAgentLive(codingConfig).pipe(
   Layer.provide(RegistryLive),
-  Layer.provide(WorkspaceLive({ openrouterKey })),
+  Layer.provide(WorkspaceLive({ openrouterKey, agentName: process.env.AGENT_NAME })),
   Layer.provideMerge(AdapterLive),
 );
 

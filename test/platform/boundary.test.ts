@@ -1,8 +1,10 @@
 /**
- * Boundary guard — AC-8. The dependency rule is directional:
- *   platform/ imports nothing from agents/
- *   agents/X/ imports platform/ freely, but never another agents/Y/
- * This test fails the build if either rule is broken.
+ * Boundary guard. The dependency rule is directional, three layers:
+ *   platform/        imports nothing from harness/ or agents/
+ *   harness/opencode imports platform/, never agents/
+ *   agents/X/        imports platform/ and harness/, never another agents/Y/
+ * and nothing above platform/ imports a concrete adapter (only adapter/types.ts).
+ * This test fails the build if any rule is broken.
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -42,18 +44,28 @@ function isInside(file: string, dir: string): boolean {
   return rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel);
 }
 
-test("platform/ never imports from agents/", async () => {
-  const platformDir = path.join(SRC, "platform");
+/** Files under `from` that import anything under one of `forbidden`. */
+async function importsInto(from: string, forbidden: string[]): Promise<string[]> {
   const offenders: string[] = [];
-  for (const file of await tsFiles(platformDir)) {
+  for (const file of await tsFiles(path.join(SRC, from))) {
     for (const spec of relativeImports(await readFile(file, "utf8"))) {
       const resolved = path.resolve(path.dirname(file), spec);
-      if (isInside(resolved, path.join(SRC, "agents"))) {
+      if (forbidden.some((dir) => isInside(resolved, path.join(SRC, dir)))) {
         offenders.push(`${path.relative(SRC, file)} -> ${spec}`);
       }
     }
   }
-  assert.deepEqual(offenders, [], `platform must not import agents:\n${offenders.join("\n")}`);
+  return offenders;
+}
+
+test("platform/ never imports from harness/ or agents/", async () => {
+  const offenders = await importsInto("platform", ["harness", "agents"]);
+  assert.deepEqual(offenders, [], `platform must not import upward:\n${offenders.join("\n")}`);
+});
+
+test("harness/ never imports from agents/", async () => {
+  const offenders = await importsInto("harness", ["agents"]);
+  assert.deepEqual(offenders, [], `harness must not import agents:\n${offenders.join("\n")}`);
 });
 
 test("an agent never imports another agent", async () => {
@@ -72,9 +84,9 @@ test("an agent never imports another agent", async () => {
   assert.deepEqual(offenders, [], `an agent must not import another:\n${offenders.join("\n")}`);
 });
 
-test("an agent never imports a concrete adapter (only platform/adapter/types.ts)", async () => {
+test("agents/ and harness/ never import a concrete adapter (only platform/adapter/types.ts)", async () => {
   const offenders: string[] = [];
-  for (const file of await tsFiles(path.join(SRC, "agents"))) {
+  for (const file of [...(await tsFiles(path.join(SRC, "agents"))), ...(await tsFiles(path.join(SRC, "harness")))]) {
     for (const spec of relativeImports(await readFile(file, "utf8"))) {
       const resolved = path.resolve(path.dirname(file), spec);
       if (isInside(resolved, path.join(SRC, "platform", "adapter")) && !resolved.endsWith(path.join("adapter", "types.ts"))) {

@@ -15,7 +15,7 @@ process.env.ROOMS_ENV_DIR = await mkdtemp(path.join(tmpdir(), "alveole-docker-te
 process.env.RUNNER_IMAGE = "alveole-runner:test";
 process.env.BROKER_CONTAINER_NAME = "alveole-broker-test";
 
-const docker = await import("../../../src/agents/coding/docker.ts");
+const docker = await import("../../../src/harness/opencode/docker.ts");
 const { parseEnvFile, envFileContent, inspectStateToRoomPodState, roomNetworkName, roomEnvFilePath, roomResourceName, readRoomPodState, waitForRunning, getRoomServerPassword, provisionRoom, teardownRoom, setDockerExecForTests } = docker;
 
 test("roomResourceName re-export is a valid docker container name", () => {
@@ -142,8 +142,8 @@ test("provisionRoom reuses the existing password and never recreates a running c
     return { stdout: "", stderr: "" };
   });
 
-  const password1 = await provisionRoom(name, { repo: "o/r", token: "t", openrouterKey: "k" }, "rules");
-  const password2 = await provisionRoom(name, { repo: "o/r", token: "t", openrouterKey: "k" }, "rules");
+  const password1 = await provisionRoom(name, { REPO: "o/r", GH_TOKEN: "t", OPENROUTER_API_KEY: "k" }, "rules");
+  const password2 = await provisionRoom(name, { REPO: "o/r", GH_TOKEN: "t", OPENROUTER_API_KEY: "k" }, "rules");
   assert.equal(password1, password2); // password reused, never regenerated
 
   const runs = calls.filter((args) => args[0] === "run");
@@ -181,9 +181,9 @@ test("provisionRoom recreates a dead container and reuses its password", async (
     return { stdout: "", stderr: "" };
   });
 
-  const password = await provisionRoom(name, { repo: "o/r", token: "t", openrouterKey: "k" });
+  const password = await provisionRoom(name, { REPO: "o/r", GH_TOKEN: "t", OPENROUTER_API_KEY: "k" });
   assert.equal(calls.filter((args) => args[0] === "run").length, 1); // fresh create: no container existed, nothing to remove
-  const second = await provisionRoom(name, { repo: "o/r", token: "t", openrouterKey: "k" });
+  const second = await provisionRoom(name, { REPO: "o/r", GH_TOKEN: "t", OPENROUTER_API_KEY: "k" });
   assert.ok(calls.some((args) => args[0] === "rm" && args[1] === "-f" && args[2] === name)); // dead one removed...
   assert.equal(calls.filter((args) => args[0] === "run").length, 2); // ...then recreated
   assert.equal(second, password); // same env file -> same password

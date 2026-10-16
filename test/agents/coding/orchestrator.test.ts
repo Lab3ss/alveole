@@ -5,8 +5,9 @@ import { ChatAdapter, type ChatAdapterService, type InboundMessage, type Outboun
 import { Agent } from "../../../src/platform/agent.ts";
 import { CodingAgentLive } from "../../../src/agents/coding/index.ts";
 import { codingAgentRules } from "../../../src/agents/coding/rules.ts";
-import { Registry, type RegistryService, type Room } from "../../../src/agents/coding/registry-service.ts";
-import { Workspace, type Failure, type WatchHandlers, type WorkspaceService } from "../../../src/agents/coding/workspace.ts";
+import { Registry, type RegistryService } from "../../../src/harness/opencode/registry.ts";
+import type { Room } from "../../../src/agents/coding/registry.ts";
+import { Workspace, type Failure, type WatchHandlers, type WorkspaceService } from "../../../src/harness/opencode/workspace.ts";
 
 // ---------------------------------------------------------------------------
 // Fakes — the whole point of the adapter seam: onboarding, commands, and the
@@ -152,7 +153,7 @@ const runtime = ManagedRuntime.make(
 // the test runner can reorder which timer fires first (real-world ratios are
 // 15 min vs 4 h, far beyond any jitter; the race only exists at ms scale).
 const createdRuntimes: Array<ManagedRuntime.ManagedRuntime<any, any>> = [];
-const guardrailOrchestrator = async (cap: Partial<import("../../../src/agents/coding/orchestrator.ts").OrchestratorConfig>) => {
+const guardrailOrchestrator = async (cap: Partial<import("../../../src/harness/opencode/engine.ts").EngineConfig>) => {
   const rt = ManagedRuntime.make(
     Layer.provide(
       CodingAgentLive({ idleTeardownMs: 3600_000, sweepIntervalMs: 60_000, turnWatchdogMs: 0, turnMaxMs: 0, sessionCostCapUsd: 0, defaultModel: DEFAULT_MODEL, ...cap }),

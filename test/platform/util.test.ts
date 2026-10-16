@@ -1,7 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { describeError, resolveCryptoStorePath } from "../../src/platform/util.ts";
-import { parseRepo, formatUsage, shellQuote } from "../../src/agents/coding/util.ts";
+import { parseRepo, shellQuote } from "../../src/agents/coding/util.ts";
+import { formatUsage } from "../../src/harness/opencode/util.ts";
 import { splitForMatrix } from "../../src/platform/adapter/matrix.ts";
 
 test("parseRepo accepts owner/name", () => {
