@@ -66,11 +66,18 @@ const escapeRegExp = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\
  * exists to prevent.
  */
 export function isBotMentioned(me: string, content: any): boolean {
-  const mentions = content?.["m.mentions"];
-  if (Array.isArray(mentions?.user_ids) && mentions.user_ids.includes(me)) return true;
+  if (isBotMentionedViaMentions(me, content)) return true;
   const body = typeof content?.body === "string" ? content.body : "";
   const localpart = me.split(":")[0]; // Matrix localpart includes the leading "@"
   return new RegExp(`${escapeRegExp(localpart)}(?![\\w-])`).test(body);
+}
+
+/** The authoritative signal alone: `m.mentions.user_ids` (MSC3952) names the
+ * bot explicitly. Distinct from `isBotMentioned` because callers may need to
+ * know the mention was client-confirmed rather than inferred from the body. */
+export function isBotMentionedViaMentions(me: string, content: any): boolean {
+  const mentions = content?.["m.mentions"];
+  return Array.isArray(mentions?.user_ids) && mentions.user_ids.includes(me);
 }
 
 /**
@@ -81,8 +88,20 @@ export function isBotMentioned(me: string, content: any): boolean {
  * bot's display name in the body; older clients leave the literal `@localpart`
  * or `@mxid`. Longest token first so an mxid isn't half-consumed by its
  * localpart prefix. Case-insensitive; only the START is touched.
+ *
+ * By default the token must end on a non-word boundary, so a *different*
+ * handle that merely starts with ours (e.g. `@coding-agent-2`) is left alone.
+ * Some clients glue the mention pill straight onto the payload with no
+ * separator (`@coding-agentyes`), which that guard would refuse to strip; when
+ * the adapter has already confirmed the bot was mentioned (an authoritative
+ * `m.mentions.user_ids` hit) pass `authoritative` to drop the boundary and
+ * recover the answer.
  */
-export function stripMention(body: string, tokens: Array<string | undefined>): string {
+export function stripMention(
+  body: string,
+  tokens: Array<string | undefined>,
+  opts: { readonly authoritative?: boolean } = {},
+): string {
   const alts = tokens
     .filter((t): t is string => !!t && t.length > 0)
     .map((t) => escapeRegExp(t.replace(/^@/, "")))
@@ -90,7 +109,8 @@ export function stripMention(body: string, tokens: Array<string | undefined>): s
   if (!alts.length) return body.trim();
   // `@?` so an Element-style display-name mention ("@Coding Agent …" or
   // "Coding Agent: …") is covered alongside the literal "@localpart".
-  const re = new RegExp(`^\\s*@?(?:${alts.join("|")})(?![\\w-])\\s*[:,\\-–—]?\\s*`, "i");
+  const boundary = opts.authoritative ? "" : "(?![\\w-])";
+  const re = new RegExp(`^\\s*@?(?:${alts.join("|")})${boundary}\\s*[:,\\-–—]?\\s*`, "i");
   return body.replace(re, "").trim();
 }
 
@@ -261,6 +281,10 @@ const makeMatrixAdapter = (config: MatrixAdapterConfig): Effect.Effect<ChatAdapt
             if (seenEventIds.size > SEEN_EVENT_IDS_CAP) seenEventIds.clear();
           }
           const mentioned = isBotMentioned(me, event.content);
+          // An `m.mentions.user_ids` hit is authoritative: the client is
+          // telling us exactly who was mentioned, so the leading pill can be
+          // stripped even if it's glued to the payload (see stripMention).
+          const viaMentions = isBotMentionedViaMentions(me, event.content);
           const raw = (event.content.body ?? "").trim();
           // Resolve names before handing the message to the core: ambient lines
           // are attributed to their author, and an addressed message needs its
@@ -277,7 +301,7 @@ const makeMatrixAdapter = (config: MatrixAdapterConfig): Effect.Effect<ChatAdapt
               mentioned,
               text: raw,
               directive: mentioned
-                ? stripMention(raw, [me.split(":")[0], me, botName])
+                ? stripMention(raw, [me.split(":")[0], me, botName], { authoritative: viaMentions })
                 : undefined,
             });
           });
