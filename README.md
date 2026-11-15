@@ -104,6 +104,30 @@ your code. Build it once; every room reuses it afterwards:
 docker compose --profile build -f deploy/docker-compose.yml --env-file .env build runner-image
 ```
 
+##### Optional: assistant bots
+
+Besides `coding-agent`, you can run general-purpose assistant bots: no repo,
+no onboarding — mention one and it answers from its own throwaway container,
+fetching web pages when a question needs it. Each bot is independent (own Matrix
+account, own container, own state) and bots differ only by model. Several can
+share a room with `coding-agent`: each gets its own workspace, and each only
+acts when mentioned.
+
+```sh
+# build the assistant runner once
+docker compose --profile build -f deploy/docker-compose.yml --env-file .env build assistant-runner-image
+# add the profile in .env:  COMPOSE_PROFILES=matrix-included,assistants
+```
+
+The `assistant` service is configured by the `ASSISTANT_*` variables in `.env`
+(section 6 of `.env.example`): `ASSISTANT_BOT_USER`, `ASSISTANT_BOT_DISPLAY_NAME`
+and the required `ASSISTANT_DEFAULT_MODEL` — no model is baked in. To run
+another bot, copy the `assistant` and `bootstrap-assistant` blocks in
+`deploy/docker-compose.yml`, rename the services, container and volume, and
+give the copy its own variables (its `AGENT_NAME` and bot user must differ).
+The assistant's workspace is disposable by design: after `IDLE_TEARDOWN_HOURS`
+idle (or `/stop`) it resets and the conversation context is lost.
+
 #### 4. Start
 
 Bring the stack up in the background.
@@ -195,6 +219,12 @@ hard it may push (the guardrails):
 | `ROOMS_NAMESPACE` | where per-room pods live; default `alveole-rooms` |
 | `RUNNER_IMAGE` | runner image tag; default `ghcr.io/lab3ss/alveole-runner:0.3.0` |
 | `IDLE_TEARDOWN_HOURS` | idle threshold before auto-teardown; default `24` |
+| `AGENT_KIND` | which agent this process serves: `coding` (default) or `assistant` |
+| `AGENT_NAME` | names this bot's workspaces (pods/containers); **required** for every kind but `coding`, and must differ between bots sharing a room |
+| `BOT_ACCOUNT_FILE` | this bot's bootstrap-written Matrix account file; default `/data/bot-account.json` |
+| `ASSISTANT_DEFAULT_MODEL` | assistant only, **required**: the OpenRouter model a room starts on — the one thing that distinguishes one assistant bot from another |
+| `ASSISTANT_SYSTEM_PROMPT` | assistant only: replaces the default persona |
+| `ASSISTANT_RUNNER_IMAGE` | assistant only: runner image tag; default `ghcr.io/lab3ss/alveole-assistant-runner:0.3.0` (k8s) or `alveole-assistant-runner:local` (compose) |
 | `TURN_WATCHDOG_MINUTES` | abort a turn with no agent activity this long (approval waits exempt); default `15`, `0` disables |
 | `TURN_MAX_HOURS` | absolute turn duration cap; default `4`, `0` disables |
 | `SESSION_COST_CAP_USD` | abort a turn once the session's cost reaches this — the circuit-breaker against a looping agent; default `10`, `0` disables |

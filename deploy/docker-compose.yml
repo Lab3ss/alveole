@@ -66,6 +66,89 @@ services:
     profiles:
       - build
 
+  # Build-only service (never runs): the assistant bots' runner image. Build it
+  # once before enabling the `assistants` profile:
+  #   docker compose --profile build build assistant-runner-image
+  assistant-runner-image:
+    build: ../src/agents/assistant/runner
+    image: ${ASSISTANT_RUNNER_IMAGE:-alveole-assistant-runner:local}
+    profiles:
+      - build
+
+  # ---- Assistant bots (opt-in: COMPOSE_PROFILES=matrix-included,assistants) ----
+  # One independent broker process per bot: same image, AGENT_KIND=assistant, its
+  # own Matrix account, volume (registry, sync state, crypto store, room env
+  # files), container name and model — the model is the only difference between
+  # bots. Configured with the ASSISTANT_* variables (see .env.example). To run
+  # another bot, copy the `assistant` and `bootstrap-assistant` blocks, rename the
+  # services, container and volume, and point them at that bot's own variables.
+  # AGENT_NAME names the bot's workspaces, so it must differ per bot;
+  # BROKER_CONTAINER_NAME must equal the bot's container_name (the broker joins
+  # per-room networks by it).
+  assistant:
+    image: alveole-broker:local
+    pull_policy: build
+    container_name: alveole-assistant
+    user: root
+    restart: unless-stopped
+    profiles:
+      - assistants
+    environment:
+      AGENT_KIND: assistant
+      AGENT_NAME: ${ASSISTANT_BOT_USER:-assistant}
+      BROKER_CONTAINER_NAME: alveole-assistant
+      WORKSPACE_BACKEND: compose
+      REGISTRY_DB_PATH: /data/registry.db
+      # In matrix-included mode the bot's account comes from this file, written
+      # by bootstrap-assistant; with an external homeserver set ASSISTANT_MATRIX_TOKEN.
+      BOT_ACCOUNT_FILE: /data/bot-account.json
+      MATRIX_HOMESERVER: ${MATRIX_HOMESERVER:-}
+      MATRIX_TOKEN: ${ASSISTANT_MATRIX_TOKEN:-}
+      MATRIX_E2EE: ${MATRIX_E2EE:-true}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:?OPENROUTER_API_KEY is required (BYOK) — set it in .env}
+      ASSISTANT_DEFAULT_MODEL: ${ASSISTANT_DEFAULT_MODEL:-}
+      ASSISTANT_SYSTEM_PROMPT: ${ASSISTANT_SYSTEM_PROMPT:-}
+      ASSISTANT_RUNNER_IMAGE: ${ASSISTANT_RUNNER_IMAGE:-alveole-assistant-runner:local}
+      RUNNER_MEM: ${RUNNER_MEM:-2g}
+      RUNNER_CPUS: ${RUNNER_CPUS:-2}
+    volumes:
+      # Root-equivalent on the host (it drives per-room containers): see the README security section.
+      - /var/run/docker.sock:/var/run/docker.sock
+      - assistant-data:/data
+    networks:
+      - internal
+
+  bootstrap-assistant:
+    # Bot-only mode of the regular bootstrap: registers/logs in the assistant bot
+    # and writes its account file into assistant-data. No human account, no room,
+    # no welcome message.
+    image: alveole-broker:local
+    entrypoint: ["node", "/app/deploy/bootstrap/bootstrap.mjs"]
+    restart: "no"
+    user: root
+    profiles:
+      - assistants
+    environment:
+      BOOTSTRAP_BOT_ONLY: "true"
+      HOMESERVER_URL: http://homeserver:8008
+      REGISTRATION_TOKEN: ${REGISTRATION_TOKEN:-alveole-local-registration}
+      BOT_USER: ${ASSISTANT_BOT_USER:-assistant}
+      BOT_DISPLAY_NAME: ${ASSISTANT_BOT_DISPLAY_NAME:-Assistant}
+      BOT_ACCOUNT_FILE: /data/bot-account.json
+      # With an external homeserver the bot's token is given directly (the
+      # `assistant` service gets it too): this one-shot then has nothing to do.
+      EXTERNAL_BOT_TOKEN: ${ASSISTANT_MATRIX_TOKEN:-}
+    volumes:
+      - assistant-data:/data
+    networks:
+      - internal
+    depends_on:
+      homeserver:
+        condition: service_started
+        # The homeserver only exists in matrix-included mode; without it (external
+        # homeserver) the dependency is skipped instead of invalidating the project.
+        required: false
+
   homeserver:
     # continuuwuity (maintained successor of conduwuit), digest-pinned.
     image: ghcr.io/continuwuity/continuwuity:v0.5.9@sha256:b77b1da1622e948bb8bd50ebe185cba68677b32f6969a5d7171dc54613e59bc6
@@ -145,8 +228,8 @@ services:
       HOMESERVER_URL: http://homeserver:8008
       HOMESERVER_PUBLIC_URL: ${HOMESERVER_PUBLIC_URL:-http://localhost:8008}
       REGISTRATION_TOKEN: ${REGISTRATION_TOKEN:-alveole-local-registration}
-      ALVEOLE_BOT_USER: ${ALVEOLE_BOT_USER:-coding-agent}
-      ALVEOLE_BOT_DISPLAY_NAME: ${ALVEOLE_BOT_DISPLAY_NAME:-Coding Agent}
+      BOT_USER: ${CODING_AGENT_BOT_USER:-coding-agent}
+      BOT_DISPLAY_NAME: ${CODING_AGENT_BOT_DISPLAY_NAME:-Coding Agent}
       ALVEOLE_USER_NAME: ${ALVEOLE_USER_NAME:-user}
       ALVEOLE_ROOM_NAME: ${ALVEOLE_ROOM_NAME:-unicorn-project}
       # Second copy of the credentials, kept with the homeserver's data so the
@@ -164,6 +247,7 @@ services:
 volumes:
   data:
   homeserver-data:
+  assistant-data:
 
 networks:
   internal:

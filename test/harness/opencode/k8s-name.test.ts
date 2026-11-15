@@ -29,12 +29,12 @@ test("roomResourceName without an agent name keeps the historical names (live ro
 
 test("roomResourceName separates bots sharing a room", () => {
   const coding = roomResourceName("!room", "dev");
-  const haiku = roomResourceName("!room", "dev", "haiku");
-  const lechat = roomResourceName("!room", "dev", "Le Chat");
-  assert.notEqual(haiku, coding);
-  assert.notEqual(haiku, lechat);
-  assert.match(haiku, /^room-haiku-dev-[0-9a-f]{16}$/);
-  assert.match(lechat, /^room-le-chat-dev-[0-9a-f]{16}$/);
+  const botA = roomResourceName("!room", "dev", "bot-a");
+  const botB = roomResourceName("!room", "dev", "Bot B");
+  assert.notEqual(botA, coding);
+  assert.notEqual(botA, botB);
+  assert.match(botA, /^room-bot-a-dev-[0-9a-f]{16}$/);
+  assert.match(botB, /^room-bot-b-dev-[0-9a-f]{16}$/);
 });
 
 test("roomResourceName with an agent name is still DNS-safe and <=63 chars", () => {

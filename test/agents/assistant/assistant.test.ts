@@ -36,7 +36,7 @@ const calls = {
 };
 
 const adapter: ChatAdapterService = {
-  capabilities: { markdown: false, maxMessageChars: 3000, canRedact: true, selfMention: "@haiku", channelRules: CHANNEL },
+  capabilities: { markdown: false, maxMessageChars: 3000, canRedact: true, selfMention: "@assistant", channelRules: CHANNEL },
   start: () => Effect.void,
   send: (_id, event) => Effect.sync(() => void recorded.push(event)),
   redact: () => Effect.succeed(true),
@@ -58,7 +58,7 @@ const registry: RegistryService = {
 };
 
 const workspace: WorkspaceService = {
-  resourceName: (id) => `room-haiku-${id.replace(/[^a-z0-9]/gi, "")}`,
+  resourceName: (id) => `room-assistant-${id.replace(/[^a-z0-9]/gi, "")}`,
   serverUrl: (name) => `http://${name}`,
   provision: (_name, env, rules, image) =>
     Effect.sync(() => {
@@ -124,13 +124,13 @@ const reset = () => {
 test("the first mention provisions an empty workspace — no onboarding, no repo", async () => {
   reset();
   const { run } = await makeAgent();
-  await run({ conversationId: "!r1", text: "@haiku what is a monad?" });
+  await run({ conversationId: "!r1", text: "@assistant what is a monad?" });
   await until(() => calls.sent.length === 1);
 
   assert.equal(calls.provision.length, 1);
   assert.deepEqual(calls.provision[0].env, {}); // nothing room-specific injected
   assert.equal(calls.provision[0].image, "assistant-runner:test");
-  assert.equal(calls.sent[0].text, "@haiku what is a monad?");
+  assert.equal(calls.sent[0].text, "@assistant what is a monad?");
   assert.equal(calls.sent[0].model, "test/default-model");
   assert.ok(!texts().some((t) => /\brepo(sitory)?\b|\bPAT\b|\btoken\b/i.test(t)), "the room is never asked for a repo or token");
 
@@ -141,7 +141,7 @@ test("the first mention provisions an empty workspace — no onboarding, no repo
 test("AGENT_RULES = channel fragments + assistant persona, with a replaceable persona", async () => {
   reset();
   const a = await makeAgent();
-  await a.run({ conversationId: "!r2", text: "@haiku hi" });
+  await a.run({ conversationId: "!r2", text: "@assistant hi" });
   await until(() => calls.provision.length === 1);
   assert.equal(calls.provision[0].rules, assistantRules(CHANNEL));
   assert.ok(calls.provision[0].rules!.startsWith("PRE\nSHARED\nFORMAT\n"));
@@ -149,10 +149,10 @@ test("AGENT_RULES = channel fragments + assistant persona, with a replaceable pe
   assert.ok(!/AGENTS\.md|\brepo(sitory)?\b/i.test(calls.provision[0].rules!), "no coding-specific text");
 
   reset();
-  const b = await makeAgent({ ...SETTINGS, systemPrompt: "You are Le Chat, speak French." });
-  await b.run({ conversationId: "!r2", text: "@haiku salut" });
+  const b = await makeAgent({ ...SETTINGS, systemPrompt: "Answer only in French." });
+  await b.run({ conversationId: "!r2", text: "@assistant salut" });
   await until(() => calls.provision.length === 1);
-  assert.equal(calls.provision[0].rules, "PRE\nSHARED\nFORMAT\nYou are Le Chat, speak French.");
+  assert.equal(calls.provision[0].rules, "PRE\nSHARED\nFORMAT\nAnswer only in French.");
 });
 
 test("unmentioned chatter never provisions; it rides along once with the next mention", async () => {
@@ -162,34 +162,34 @@ test("unmentioned chatter never provisions; it rides along once with the next me
   assert.equal(calls.provision.length, 0);
   assert.equal(recorded.length, 0);
 
-  await run({ conversationId: "!r3", text: "@haiku summarise" });
+  await run({ conversationId: "!r3", text: "@assistant summarise" });
   await until(() => calls.sent.length === 1);
   assert.match(calls.sent[0].text, /Background/);
   assert.match(calls.sent[0].text, /Alice: alice: lunch\?/);
-  assert.match(calls.sent[0].text, /@haiku summarise$/);
+  assert.match(calls.sent[0].text, /@assistant summarise$/);
 });
 
 test("/model creates the room on demand and the model reaches the prompt", async () => {
   reset();
   const { run } = await makeAgent();
-  await run({ conversationId: "!r4", text: "@haiku /model mistralai/le-chat-test", directive: "/model mistralai/le-chat-test" });
-  assert.equal(rooms.get("!r4")?.model, "mistralai/le-chat-test");
-  assert.ok(texts().some((t) => t.startsWith("Model set to mistralai/le-chat-test")));
+  await run({ conversationId: "!r4", text: "@assistant /model test/other-model", directive: "/model test/other-model" });
+  assert.equal(rooms.get("!r4")?.model, "test/other-model");
+  assert.ok(texts().some((t) => t.startsWith("Model set to test/other-model")));
 
-  await run({ conversationId: "!r4", text: "@haiku go" });
+  await run({ conversationId: "!r4", text: "@assistant go" });
   await until(() => calls.sent.length === 1);
-  assert.equal(calls.sent[0].model, "mistralai/le-chat-test");
+  assert.equal(calls.sent[0].model, "test/other-model");
 });
 
 test("/stop tears the workspace down and says the context was reset", async () => {
   reset();
   const { run } = await makeAgent();
-  await run({ conversationId: "!r5", text: "@haiku hi" });
+  await run({ conversationId: "!r5", text: "@assistant hi" });
   await until(() => calls.sent.length === 1);
   calls.lastPromptDone!(undefined);
   await until(() => recorded.some((e) => e.type === "result"));
 
-  await run({ conversationId: "!r5", text: "@haiku /stop", directive: "/stop" });
+  await run({ conversationId: "!r5", text: "@assistant /stop", directive: "/stop" });
   assert.equal(calls.teardown, 1);
   const last = texts().at(-1)!;
   assert.match(last, /Stopped \(requested\)/);
@@ -202,30 +202,33 @@ test("greet introduces the bot once, naming its handle and the reset policy", as
   const { greet } = await makeAgent();
   await greet("!r6");
   assert.equal(recorded.length, 1);
-  assert.match(texts()[0], /@haiku/);
+  assert.match(texts()[0], /@assistant/);
   assert.match(texts()[0], /after 6h idle/);
   await greet("!r6"); // repeat join signal
   assert.equal(recorded.length, 1);
 });
 
-test("config: model alias default, per-backend runner image, overrides", () => {
-  const d = assistantConfigFromEnv({});
-  assert.equal(d.engine.defaultModel, "~anthropic/claude-haiku-latest");
+test("config: the model is required (none baked in); per-backend runner image; overrides", () => {
+  assert.throws(() => assistantConfigFromEnv({}), /ASSISTANT_DEFAULT_MODEL required/);
+  assert.throws(() => assistantConfigFromEnv({ ASSISTANT_DEFAULT_MODEL: "  " }), /ASSISTANT_DEFAULT_MODEL required/);
+
+  const d = assistantConfigFromEnv({ ASSISTANT_DEFAULT_MODEL: "test/model-a" });
+  assert.equal(d.engine.defaultModel, "test/model-a");
   assert.equal(d.settings.runnerImage, "ghcr.io/lab3ss/alveole-assistant-runner:0.3.0");
   assert.equal(d.settings.systemPrompt, undefined);
   assert.equal(d.engine.idleTeardownMs, 24 * 3600_000);
 
-  const compose = assistantConfigFromEnv({ WORKSPACE_BACKEND: "compose" });
+  const compose = assistantConfigFromEnv({ ASSISTANT_DEFAULT_MODEL: "test/model-a", WORKSPACE_BACKEND: "compose" });
   assert.equal(compose.settings.runnerImage, "alveole-assistant-runner:local");
 
   const custom = assistantConfigFromEnv({
-    ASSISTANT_DEFAULT_MODEL: "mistralai/mistral-medium",
+    ASSISTANT_DEFAULT_MODEL: "test/model-b",
     ASSISTANT_RUNNER_IMAGE: "my/runner:1",
-    ASSISTANT_SYSTEM_PROMPT: "Be Le Chat.",
+    ASSISTANT_SYSTEM_PROMPT: "Be terse.",
     IDLE_TEARDOWN_HOURS: "2",
   });
-  assert.equal(custom.engine.defaultModel, "mistralai/mistral-medium");
+  assert.equal(custom.engine.defaultModel, "test/model-b");
   assert.equal(custom.settings.runnerImage, "my/runner:1");
-  assert.equal(custom.settings.systemPrompt, "Be Le Chat.");
+  assert.equal(custom.settings.systemPrompt, "Be terse.");
   assert.equal(custom.engine.idleTeardownMs, 2 * 3600_000);
 });

@@ -1,8 +1,8 @@
 /**
  * Assistant configuration — environment → engine config + profile settings.
  * The composition root (broker.ts) calls this; no platform code reads these env
- * vars. Several bots (Haiku, Le Chat, …) are the same agent with a different
- * ASSISTANT_DEFAULT_MODEL and Matrix account — model is the only difference.
+ * vars. Several bots are the same agent with a different ASSISTANT_DEFAULT_MODEL
+ * and Matrix account — the model is the only difference, so none is baked in.
  */
 import type { EngineConfig } from "../../harness/opencode/engine.ts";
 
@@ -21,6 +21,16 @@ export type AssistantConfig = { readonly engine: EngineConfig; readonly settings
 const defaultRunnerImage = (backend: string | undefined): string =>
   backend === "compose" ? "alveole-assistant-runner:local" : "ghcr.io/lab3ss/alveole-assistant-runner:0.3.0";
 
+const requiredModel = (value: string | undefined): string => {
+  const model = value?.trim();
+  if (!model) {
+    throw new Error(
+      "ASSISTANT_DEFAULT_MODEL required — the OpenRouter model every room of this assistant bot starts on (each bot picks its own)",
+    );
+  }
+  return model;
+};
+
 export function assistantConfigFromEnv(env: NodeJS.ProcessEnv = process.env): AssistantConfig {
   const idleHours = parseFloat(env.IDLE_TEARDOWN_HOURS ?? "24");
   return {
@@ -32,9 +42,9 @@ export function assistantConfigFromEnv(env: NodeJS.ProcessEnv = process.env): As
       turnWatchdogMs: parseFloat(env.TURN_WATCHDOG_MINUTES ?? "15") * 60_000,
       turnMaxMs: parseFloat(env.TURN_MAX_HOURS ?? "4") * 3600_000,
       sessionCostCapUsd: parseFloat(env.SESSION_COST_CAP_USD ?? "10"),
-      // `~anthropic/claude-haiku-latest` is OpenRouter's floating alias for the
-      // newest Haiku; pin an exact slug here to stop it moving.
-      defaultModel: env.ASSISTANT_DEFAULT_MODEL ?? "~anthropic/claude-haiku-latest",
+      // No default on purpose: choosing the model is what distinguishes one
+      // assistant bot from another, so every deployment states it.
+      defaultModel: requiredModel(env.ASSISTANT_DEFAULT_MODEL),
     },
     settings: {
       systemPrompt: env.ASSISTANT_SYSTEM_PROMPT || undefined,

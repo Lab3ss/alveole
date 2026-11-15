@@ -14,8 +14,8 @@
  *   3. ensures the bot account exists — reuses the stored access token when it
  *      still answers whoami, else logs in with the stored bot password, else
  *      registers (creating a password only when registering), and sets its
- *      profile display name (ALVEOLE_BOT_DISPLAY_NAME, default "Coding Agent";
- *      the localpart ALVEOLE_BOT_USER stays a valid Matrix username). If the
+ *      profile display name (BOT_DISPLAY_NAME, default "Coding Agent";
+ *      the localpart BOT_USER stays a valid Matrix username). If the
  *      username is taken but no stored credential works (the file was lost
  *      while the homeserver kept the accounts), it falls back to a unique
  *      suffixed username rather than failing — a bot that exists beats a
@@ -52,10 +52,21 @@ const BACKUP_FILE = process.env.BOT_ACCOUNT_BACKUP_FILE;
 const HOMESERVER_URL = (process.env.HOMESERVER_URL ?? "http://homeserver:8008").replace(/\/+$/, "");
 const HOMESERVER_PUBLIC_URL = process.env.HOMESERVER_PUBLIC_URL ?? "http://localhost:8008";
 const REGISTRATION_TOKEN = process.env.REGISTRATION_TOKEN ?? "";
-const BOT_USER = process.env.ALVEOLE_BOT_USER ?? "coding-agent";
-const BOT_DISPLAY_NAME = process.env.ALVEOLE_BOT_DISPLAY_NAME ?? "Coding Agent";
+const BOT_USER = process.env.BOT_USER ?? "coding-agent";
+const BOT_DISPLAY_NAME = process.env.BOT_DISPLAY_NAME ?? "Coding Agent";
 const HUMAN_USER = process.env.ALVEOLE_USER_NAME ?? "user";
 const ROOM_NAME = process.env.ALVEOLE_ROOM_NAME ?? "unicorn-project";
+// Provision only a bot account (BOT_USER → BOT_ACCOUNT_FILE): no human, no room,
+// no welcome message. Used for additional bots on a homeserver the main
+// bootstrap already set up — every full run would otherwise create another room.
+const BOT_ONLY = ["1", "true", "yes", "on"].includes((process.env.BOOTSTRAP_BOT_ONLY ?? "").trim().toLowerCase());
+// External-homeserver deployments hand the bot its Matrix token directly, so
+// there is nothing to provision: in bot-only mode a provided token short-circuits
+// (before any network call) instead of waiting on a homeserver that isn't there.
+if (BOT_ONLY && process.env.EXTERNAL_BOT_TOKEN) {
+  console.log("[bootstrap] an external Matrix token was provided for this bot — nothing to provision");
+  process.exit(0);
+}
 
 const fail = (msg) => {
   console.error(`[bootstrap] ${msg}`);
@@ -260,6 +271,14 @@ try {
     botAccessToken = token;
   }
   await setDisplayName(botUserId, BOT_DISPLAY_NAME, botAccessToken);
+
+  if (BOT_ONLY) {
+    persist({ homeserverUrl: HOMESERVER_URL, botUserId, botAccessToken, botPassword });
+    console.log(
+      `[bootstrap] ${botReused ? "reconciled" : "created"} bot ${botUserId} (${BOT_DISPLAY_NAME}); ${ACCOUNT_FILE} written for its broker — invite it to a room as ${botUserId}`,
+    );
+    process.exit(0);
+  }
 
   // --- human account -------------------------------------------------------
   // The human only needs to be reachable so the room can invite them, and we

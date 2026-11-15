@@ -381,3 +381,62 @@ test("bootstrap refuses to register without a REGISTRATION_TOKEN when the homese
     await rm(dataDir, { recursive: true, force: true });
   }
 });
+
+test("BOOTSTRAP_BOT_ONLY provisions just the extra bot: no human, no room, no welcome", async () => {
+  const mock = await startMockHomeserver();
+  const dataDir = await mkdtemp(path.join(tmpdir(), "alveole-bootstrap-botonly-"));
+  const mainFile = path.join(dataDir, "bot-account.json");
+  const assistantFile = path.join(dataDir, "assistant-account.json");
+  const botOnly = { BOOTSTRAP_BOT_ONLY: "true", BOT_USER: "assistant", BOT_DISPLAY_NAME: "Assistant" };
+  try {
+    // The regular bootstrap first (human + room), then an additional bot on top of it.
+    assert.equal((await runBootstrap(mock.url, mainFile)).code, 0);
+    const roomsBefore = mock.createRoomCount();
+    const messagesBefore = mock.messages().length;
+
+    const extra = await runBootstrap(mock.url, assistantFile, "it-token", undefined, botOnly);
+    assert.equal(extra.code, 0, `bot-only bootstrap failed: ${extra.stderr}`);
+    assert.deepEqual([...mock.registered.keys()].sort(), ["assistant", "coding-agent", "user"]);
+    assert.equal(mock.createRoomCount(), roomsBefore, "no new room");
+    assert.equal(mock.messages().length, messagesBefore, "no welcome message");
+    assert.equal(mock.displayNames().get(`@assistant:${DOMAIN}`), "Assistant");
+    assert.doesNotMatch(extra.stdout, /Alvéole is ready/);
+
+    const account = JSON.parse(await readFile(assistantFile, "utf8"));
+    assert.deepEqual(Object.keys(account).sort(), ["botAccessToken", "botPassword", "botUserId", "homeserverUrl"]);
+    assert.equal(account.botUserId, `@assistant:${DOMAIN}`);
+    assert.match(account.botAccessToken, /^tok-assistant-/);
+    assert.equal((await stat(assistantFile)).mode & 0o777, 0o600);
+    // The main bot's account file is untouched.
+    assert.equal(JSON.parse(await readFile(mainFile, "utf8")).botUserId, `@coding-agent:${DOMAIN}`);
+
+    // Idempotent: a re-run reuses the account (same token, nothing re-registered).
+    const again = await runBootstrap(mock.url, assistantFile, "it-token", undefined, botOnly);
+    assert.equal(again.code, 0);
+    assert.match(again.stdout, /reconciled bot @assistant/);
+    assert.equal(JSON.parse(await readFile(assistantFile, "utf8")).botAccessToken, account.botAccessToken);
+  } finally {
+    mock.server.close();
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+test("bot-only bootstrap does nothing when an external Matrix token is provided", async () => {
+  const mock = await startMockHomeserver();
+  const dataDir = await mkdtemp(path.join(tmpdir(), "alveole-bootstrap-external-"));
+  const accountFile = path.join(dataDir, "assistant-account.json");
+  try {
+    const run = await runBootstrap(mock.url, accountFile, "it-token", undefined, {
+      BOOTSTRAP_BOT_ONLY: "true",
+      BOT_USER: "assistant",
+      EXTERNAL_BOT_TOKEN: "syt_external",
+    });
+    assert.equal(run.code, 0, run.stderr);
+    assert.match(run.stdout, /external Matrix token was provided/);
+    assert.equal(mock.registered.size, 0, "nothing registered");
+    await assert.rejects(stat(accountFile), "no account file written");
+  } finally {
+    mock.server.close();
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});

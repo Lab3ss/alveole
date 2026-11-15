@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
-import { cryptoStorePath, resolveMatrixCredentials } from "../../src/platform/boot.ts";
+import { botStatePath, cryptoStorePath, resolveMatrixCredentials } from "../../src/platform/boot.ts";
 
 async function withAccountFile(content: string, fn: (file: string) => Promise<void>) {
   const dir = await mkdtemp(path.join(tmpdir(), "alveole-boot-test-"));
@@ -72,4 +72,24 @@ test("cryptoStorePath defaults next to the registry DB and honors overrides", ()
   assert.equal(cryptoStorePath({ REGISTRY_DB_PATH: "/data/registry.db" }), "/data/crypto-store");
   assert.equal(cryptoStorePath({ REGISTRY_DB_PATH: "/data/registry.db", MATRIX_CRYPTO_STORE: "/keys" }), "/keys");
   assert.equal(cryptoStorePath({ REGISTRY_DB_PATH: "/data/registry.db", MATRIX_E2EE: "false" }), undefined);
+});
+
+test("botStatePath sits next to the bot's registry DB (default keeps the historical file)", () => {
+  assert.equal(botStatePath({}), "bot-state.json");
+  assert.equal(botStatePath({ REGISTRY_DB_PATH: "/data/registry.db" }), "/data/bot-state.json");
+  assert.equal(botStatePath({ REGISTRY_DB_PATH: "/data/bot-a/registry.db" }), "/data/bot-a/bot-state.json");
+});
+
+test("BOT_ACCOUNT_FILE selects the account file and implies waiting for the bootstrap", async () => {
+  await withAccountFile(JSON.stringify({ homeserverUrl: "http://hs", botAccessToken: "tok" }), async (file) => {
+    const prev = process.env.BOT_ACCOUNT_FILE;
+    process.env.BOT_ACCOUNT_FILE = file;
+    try {
+      const creds = await resolveMatrixCredentials({ homeserver: "", token: "", waitMs: 0, sleep: async () => {} });
+      assert.deepEqual(creds, { homeserver: "http://hs", token: "tok" });
+    } finally {
+      if (prev === undefined) delete process.env.BOT_ACCOUNT_FILE;
+      else process.env.BOT_ACCOUNT_FILE = prev;
+    }
+  });
 });

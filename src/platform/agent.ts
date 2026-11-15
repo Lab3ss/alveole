@@ -8,7 +8,7 @@
  * escaped defect becomes a room-visible error event instead of an unhandled
  * rejection, so one bad message can never take the process down.
  */
-import { Context, Effect } from "effect";
+import { Context, Effect, type Layer } from "effect";
 import { ChatAdapter, type InboundMessage } from "./adapter/types.ts";
 import { describeError } from "./util.ts";
 
@@ -81,3 +81,17 @@ export const startAgent = (agent: AgentService): Effect.Effect<void, "chat-start
       (conversationId) => runDetached(conversationId, "greet failure", agent.greet(conversationId)),
     );
   });
+
+/** What the composition root hands an agent when it builds it. */
+export type AgentBootOptions = {
+  /** The deployment-wide LLM credential shared into every workspace. */
+  readonly openrouterKey: string;
+  /** This bot's name (AGENT_NAME) — prefixes its workspace resources so bots can share a room. */
+  readonly agentName?: string;
+};
+
+/** The one thing the broker imports from an agent's entry point: a layer that
+ * builds the agent (its registry and workspace included) on top of a chat adapter. */
+export type AgentModule = {
+  readonly agentLayerFromEnv: (opts: AgentBootOptions) => Layer.Layer<Agent, never, ChatAdapter>;
+};
